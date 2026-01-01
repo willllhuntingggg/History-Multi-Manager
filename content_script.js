@@ -13,7 +13,6 @@ let isProcessing = false;
 const PLATFORM_CONFIG = {
   chatgpt: {
     linkSelector: 'a[href*="/c/"]',
-    // 更多操作按钮通常在 a 标签同级的 div 中，或者是 a 的子元素
     menuBtnSelector: 'button[data-testid$="-options"], .trailing-pair button, [id^="radix-"]',
   },
   gemini: {
@@ -32,7 +31,6 @@ const hardClick = (el) => {
   const clientY = rect.top + rect.height / 2;
 
   const opts = { bubbles: true, cancelable: true, view: window, clientX, clientY };
-  
   const events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   events.forEach(evtType => {
     const e = evtType.startsWith('pointer') ? new PointerEvent(evtType, opts) : new MouseEvent(evtType, opts);
@@ -57,35 +55,51 @@ const getPlatform = () => {
 };
 
 /**
- * 重构扫描逻辑：以链接为中心向外扩散
+ * 扫描历史记录
  */
 const scanHistory = () => {
   const platform = getPlatform();
   if (!platform) return [];
   const config = PLATFORM_CONFIG[platform];
   
-  // 查找所有对话链接
-  const allLinks = Array.from(document.querySelectorAll(config.linkSelector));
+  // 仅在可见的 nav 或侧边栏区域查找，避免抓取到页面隐藏的冗余元素
+  const links = Array.from(document.querySelectorAll(config.linkSelector));
   const results = [];
   const seenIds = new Set();
 
-  allLinks.forEach((link) => {
+  links.forEach((link) => {
     const href = link.getAttribute('href');
-    if (!href) return;
+    if (!href || href.includes('/c/new')) return; // 排除新聊天链接
 
-    // 提取 UUID。ChatGPT 格式通常是 /c/6914168f-7728...
+    // 提取 ID (UUID)
     const uuidMatch = href.match(/\/c\/([a-z0-9\-]+)/i) || href.match(/\/app\/([a-z0-9\-]+)/i);
     const rawId = uuidMatch ? uuidMatch[1] : href;
 
-    if (seenIds.has(rawId) || rawId === 'new') return;
+    if (seenIds.has(rawId)) return;
     seenIds.add(rawId);
 
-    // 向上寻找最接近的列表项容器 (li 或 role=listitem)
+    // 寻找列表项容器，用于后续的操作触发
     const container = link.closest('li') || link.closest('[role="listitem"]') || link.parentElement;
     
-    // 提取标题：优先找 .truncate，否则找链接内的文本
-    const titleEl = container.querySelector('.truncate, .conversation-title') || link;
-    const title = (titleEl.innerText || titleEl.textContent || "Untitled Chat").split('\n')[0].trim();
+    // 关键修复：直接在当前 link 内部寻找标题元素
+    // ChatGPT 的标题通常在 a -> div -> div (class truncate) 结构中
+    const titleEl = link.querySelector('.truncate, .conversation-title, .flex-1.text-ellipsis');
+    let title = "";
+    
+    if (titleEl) {
+      title = titleEl.innerText || titleEl.textContent || "";
+    } else {
+      // 备用：如果没找到特定类名，取链接内第一行非空文本
+      const textNodes = Array.from(link.childNodes)
+        .filter(n => n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && n.tagName !== 'BUTTON'))
+        .map(n => n.textContent.trim())
+        .filter(t => t.length > 0);
+      title = textNodes[0] || "Untitled Chat";
+    }
+
+    // 清洗标题，只保留第一行，防止抓取到日期分组文字
+    title = title.split('\n')[0].trim();
+    if (!title) title = "Untitled Chat";
 
     results.push({
       id: `id-${rawId}`,
@@ -95,7 +109,7 @@ const scanHistory = () => {
     });
   });
 
-  console.log(`[Manager] 扫描完成，找到 ${results.length} 条记录`);
+  console.log(`[Manager] 扫描完成: 发现 ${results.length} 条唯一记录`);
   return results;
 };
 
@@ -120,7 +134,7 @@ const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
   if (scannedItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>未找到记录</h3><p>请确保侧边栏已展开且对话已加载。</p></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>未找到记录</h3><p>请确保侧边栏已展开且聊天记录已加载。</p></div>`;
     return;
   }
   container.innerHTML = scannedItems.map(item => `
@@ -131,7 +145,7 @@ const renderDashboard = () => {
   `).join('');
   
   container.querySelectorAll('.chat-card').forEach(card => {
-    card.onclick = (e) => {
+    card.onclick = () => {
       const id = card.getAttribute('data-id');
       if (selectedIds.has(id)) selectedIds.delete(id);
       else selectedIds.add(id);
@@ -152,7 +166,7 @@ const updateDashboardUI = () => {
 
 const runBatchDelete = async () => {
   const idsToDelete = Array.from(selectedIds);
-  if (!confirm(`确定要执行批量删除操作吗？(${idsToDelete.length}项)`)) return;
+  if (!confirm(`确定要执行批量删除操作吗？(${idsToDelete.length}项)\n操作过程中请勿关闭侧边栏。`)) return;
 
   isProcessing = true;
   const platform = getPlatform();
@@ -169,23 +183,28 @@ const runBatchDelete = async () => {
     console.log(`[Manager] 正在处理: ${item.title}`);
     try {
       const row = item.originalElement;
-      row.scrollIntoView({ block: 'center' });
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      
+      // 模拟 Hover 以唤出操作按钮
       row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 500));
 
       const menuBtn = row.querySelector(config.menuBtnSelector);
       if (menuBtn) {
         hardClick(menuBtn);
-        await new Promise(r => setTimeout(r, 600));
+        await new Promise(r => setTimeout(r, 800));
 
+        // 查找菜单中的删除项
         const deleteMenuItem = findElementByText('[role="menuitem"], .text-token-text-error, div, button', ['删除', 'Delete']);
         if (deleteMenuItem) {
           hardClick(deleteMenuItem);
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 800));
 
+          // 查找弹窗中的确认按钮
           const confirmBtn = findElementByText('button', ['删除', 'Delete', 'Confirm', '确认']);
           if (confirmBtn) {
             hardClick(confirmBtn);
+            // 给系统一点同步时间
             await new Promise(r => setTimeout(r, 2000));
             
             selectedIds.delete(id);
@@ -193,6 +212,7 @@ const runBatchDelete = async () => {
             renderDashboard();
             updateDashboardUI();
           } else {
+            // 如果没找到确认按钮，按 ESC 退出可能卡住的对话框
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           }
         } else {
@@ -200,16 +220,16 @@ const runBatchDelete = async () => {
         }
       }
     } catch (err) {
-      console.error("流程执行异常:", err);
+      console.error("执行删除流程失败:", err);
     }
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 500));
   }
 
   overlay.style.opacity = "1";
   overlay.style.pointerEvents = "auto";
   isProcessing = false;
   updateDashboardUI();
-  alert('批量删除任务已结束。');
+  alert('批量删除任务已完成。');
 };
 
 const initOverlay = () => {
@@ -221,7 +241,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>聊天记录管理</h2>
-          <p>选中记录并点击右下角按钮执行批量操作。</p>
+          <p>划选或点击记录，然后执行批量删除。</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
@@ -230,7 +250,7 @@ const initOverlay = () => {
         <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions">
           <button id="dash-refresh-btn">重新扫描</button>
-          <button id="dash-delete-btn" class="danger" disabled>确认批量删除</button>
+          <button id="dash-delete-btn" class="danger" disabled>批量删除</button>
         </div>
       </div>
     </div>
@@ -270,17 +290,22 @@ const injectLauncher = () => {
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
   btn.style.cssText = `
-    position: fixed; bottom: 20px; left: 20px; width: 140px; 
-    z-index: 999999; background: #4f46e5; color: white; border: none;
-    border-radius: 50px; padding: 10px 15px; font-weight: bold;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.4); cursor: pointer;
-    font-family: sans-serif;
+    position: fixed; bottom: 24px; left: 24px; width: 140px; 
+    z-index: 2147483640; background: #4f46e5; color: white; border: none;
+    border-radius: 50px; padding: 12px 16px; font-weight: bold;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4); cursor: pointer;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: transform 0.2s;
   `;
-  btn.innerHTML = `⚡ 批量管理`;
+  btn.innerHTML = `<span>⚡</span> 批量管理`;
+  btn.onmouseenter = () => btn.style.transform = 'scale(1.05)';
+  btn.onmouseleave = () => btn.style.transform = 'scale(1)';
   btn.onclick = toggleDashboard;
   document.body.appendChild(btn);
 };
 
+// 启动
 const observer = new MutationObserver(() => { injectLauncher(); initOverlay(); });
 observer.observe(document.body, { childList: true, subtree: true });
 setTimeout(() => { injectLauncher(); initOverlay(); }, 1500);

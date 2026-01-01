@@ -10,12 +10,10 @@ let startX = 0, startY = 0;
 let dragBox = null;
 let isProcessing = false;
 
-// 平台配置：侧边栏定位
 const PLATFORM_CONFIG = {
   chatgpt: {
-    container: 'nav, [role="navigation"]',
+    container: 'nav',
     itemSelector: '#history a[href*="/c/"], nav a[href*="/c/"]',
-    // 更多按钮 (...) 的相对路径
     menuBtnSelector: '.trailing-pair > div:nth-child(2), .trailing, [data-testid$="-options"]',
   },
   gemini: {
@@ -26,26 +24,33 @@ const PLATFORM_CONFIG = {
 };
 
 /**
- * 核心：真实点击模拟
+ * 极其强力的真实点击模拟
+ * 包含 PointerEvents 和 MouseEvents 序列，绕过大部分 React 拦截
  */
-const simulateClick = (el) => {
+const hardClick = (el) => {
   if (!el) return;
-  const opts = { bubbles: true, cancelable: true, view: window };
-  el.dispatchEvent(new MouseEvent('mousedown', opts));
-  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  const rect = el.getBoundingClientRect();
+  const clientX = rect.left + rect.width / 2;
+  const clientY = rect.top + rect.height / 2;
+
+  const common = { bubbles: true, cancelable: true, view: window, clientX, clientY };
+  
+  el.dispatchEvent(new PointerEvent('pointerdown', common));
+  el.dispatchEvent(new MouseEvent('mousedown', common));
+  el.focus();
+  el.dispatchEvent(new PointerEvent('pointerup', common));
+  el.dispatchEvent(new MouseEvent('mouseup', common));
   el.click();
 };
 
 /**
- * 核心：按文本查找元素
- * @param {string} selector 基础选择器
- * @param {string[]} texts 包含的文本数组
+ * 按文本查找并返回元素
  */
 const findElementByText = (selector, texts) => {
   const elements = Array.from(document.querySelectorAll(selector));
   return elements.find(el => {
-    const content = el.innerText || el.textContent || "";
-    return texts.some(t => content.includes(t)) && el.offsetParent !== null;
+    const content = (el.innerText || el.textContent || "").toLowerCase().trim();
+    return texts.some(t => content.includes(t.toLowerCase())) && el.offsetParent !== null;
   });
 };
 
@@ -64,7 +69,7 @@ const scanHistory = () => {
   const results = [];
 
   items.forEach((el) => {
-    const title = el.innerText.split('\n')[0].trim() || "Untitled";
+    const title = (el.querySelector('.truncate') || el).innerText.split('\n')[0].trim() || "Untitled";
     const url = el.getAttribute('href');
     if (!url) return;
     const id = `id-${url.split('/').pop()}`;
@@ -96,7 +101,7 @@ const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
   if (scannedItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>未找到聊天记录</h3><p>请确保侧边栏已展开并滚动加载。</p></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>未找到记录</h3><p>请确保侧边栏已加载内容。</p></div>`;
     return;
   }
   container.innerHTML = scannedItems.map(item => `
@@ -126,84 +131,88 @@ const updateDashboardUI = () => {
 };
 
 /**
- * 批量删除逻辑 - 严格遵循用户步骤
+ * 严格批量删除逻辑
  */
 const runBatchDelete = async () => {
   const idsToDelete = Array.from(selectedIds);
-  if (!confirm(`确定要删除这 ${idsToDelete.length} 条记录吗？`)) return;
+  if (!confirm(`确定要批量删除 ${idsToDelete.length} 条对话吗？`)) return;
 
   isProcessing = true;
   const platform = getPlatform();
   const config = PLATFORM_CONFIG[platform];
   const overlay = document.getElementById('history-manager-overlay');
   
-  // 暂时隐藏面板以便观察底层操作或防止阻挡
-  overlay.style.opacity = "0.2";
+  // 弱化面板，允许背景点击
+  overlay.style.opacity = "0.1";
   overlay.style.pointerEvents = "none";
 
   for (let id of idsToDelete) {
     const item = scannedItems.find(it => it.id === id);
-    if (!item) continue;
+    if (!item || !document.body.contains(item.originalElement)) {
+      console.warn(`跳过失效条目: ${item?.title}`);
+      continue;
+    }
 
-    console.log(`正在处理: ${item.title}`);
+    console.log(`[Manager] 正在处理: ${item.title}`);
     try {
       const row = item.originalElement;
       
-      // 步骤1: 滚动到视野并点击 ... 按钮
-      row.scrollIntoView({ block: 'center' });
-      row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 300));
+      // 1. 滚动并触发悬停
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
 
+      // 2. 点击 ... 按钮
       const menuBtn = row.querySelector(config.menuBtnSelector);
       if (menuBtn) {
-        simulateClick(menuBtn);
+        hardClick(menuBtn);
         
-        // 步骤2: 等待 500ms (等待菜单弹出)
-        await new Promise(r => setTimeout(r, 600));
+        // 等待 500ms
+        await new Promise(r => setTimeout(r, 550));
 
-        // 步骤3: 找到并点击文本为 '删除' 或 'Delete' 的菜单项
-        // 优先尝试 [role="menuitem"]，如果没有则全网页搜索
+        // 3. 点击“删除”菜单项
+        // ChatGPT 的删除项通常在 [role="menuitem"] 或 data-testid="delete-chat-menu-item"
         const deleteItem = findElementByText('[role="menuitem"], div, button', ['删除', 'Delete']);
         if (deleteItem) {
-          simulateClick(deleteItem);
+          hardClick(deleteItem);
 
-          // 步骤4: 等待 500ms (等待确认框)
-          await new Promise(r => setTimeout(r, 600));
+          // 等待 500ms
+          await new Promise(r => setTimeout(r, 550));
 
-          // 步骤5: 点击包含 '删除' 或 'Delete' 的确认按钮
-          const confirmBtn = findElementByText('button', ['删除', 'Delete', 'Confirm']);
+          // 4. 点击确认按钮
+          // 通常是 data-testid="delete-conversation-confirm-button" 或红色按钮
+          const confirmBtn = findElementByText('button', ['删除', 'Delete', 'Confirm', '确认']);
           if (confirmBtn) {
-            simulateClick(confirmBtn);
-            // 等待系统处理删除
-            await new Promise(r => setTimeout(r, 1200));
+            hardClick(confirmBtn);
+            // 每一个删除操作完成后多等一会，让 ChatGPT 同步
+            await new Promise(r => setTimeout(r, 1500));
             
-            // 成功后更新本地状态
             selectedIds.delete(id);
             scannedItems = scannedItems.filter(it => it.id !== id);
             renderDashboard();
             updateDashboardUI();
           } else {
-            console.warn("找不到确认按钮");
+            console.error("未找到二次确认按钮");
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
           }
         } else {
-          console.warn("找不到删除菜单项");
+          console.error("未找到删除菜单项");
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
         }
       } else {
-        console.warn("找不到更多按钮(...)");
+        console.error("未找到更多按钮(...)");
       }
     } catch (err) {
-      console.error("处理出错:", err);
+      console.error("删除执行异常:", err);
     }
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 400));
   }
 
   overlay.style.opacity = "1";
   overlay.style.pointerEvents = "auto";
   isProcessing = false;
   updateDashboardUI();
-  alert('批量删除任务已结束。');
+  alert('批量删除完成。');
 };
 
 const initOverlay = () => {
@@ -214,16 +223,16 @@ const initOverlay = () => {
     <div class="dashboard-window">
       <div class="dashboard-header">
         <div class="header-info">
-          <h2>历史记录批量管理</h2>
-          <p>划选或点击卡片，然后执行批量删除。</p>
+          <h2>批量管理助手</h2>
+          <p>请保持此页面处于活动状态直到操作完成。</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
       <div id="dashboard-items-grid" class="dashboard-body"></div>
       <div class="dashboard-footer">
-        <span id="selected-count-label">0 Selected</span>
+        <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions">
-          <button id="dash-refresh-btn">刷新列表</button>
+          <button id="dash-refresh-btn">刷新</button>
           <button id="dash-delete-btn" class="danger" disabled>批量删除</button>
         </div>
       </div>
@@ -234,6 +243,7 @@ const initOverlay = () => {
   document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 
+  // 划选逻辑
   const grid = document.getElementById('dashboard-items-grid');
   grid.onmousedown = (e) => {
     if (isProcessing || e.target.closest('.chat-card')) return;
@@ -257,17 +267,25 @@ const initOverlay = () => {
   window.onmouseup = () => { isDragging = false; dragBox?.remove(); dragBox = null; };
 };
 
+/**
+ * 安全注入 Launcher 按钮
+ * 避开 React 核心节点，采用绝对/固定定位或非侵入式插入
+ */
 const injectLauncher = () => {
   const platform = getPlatform();
   if (!platform || document.getElementById('history-manager-launcher')) return;
-  const nav = document.querySelector(PLATFORM_CONFIG[platform].container);
-  if (nav) {
-    const btn = document.createElement('button');
-    btn.id = 'history-manager-launcher';
-    btn.innerHTML = `<span>⚡ 批量管理</span>`;
-    btn.onclick = toggleDashboard;
-    nav.prepend(btn);
-  }
+  
+  // 注入到 sidepanel-footer 或者直接 fixed 定位在左下角
+  const btn = document.createElement('button');
+  btn.id = 'history-manager-launcher';
+  btn.style.position = 'fixed';
+  btn.style.bottom = '20px';
+  btn.style.left = '20px';
+  btn.style.width = '160px';
+  btn.style.zIndex = '9999';
+  btn.innerHTML = `<span>⚡ 批量管理</span>`;
+  btn.onclick = toggleDashboard;
+  document.body.appendChild(btn);
 };
 
 const observer = new MutationObserver(() => { injectLauncher(); initOverlay(); });

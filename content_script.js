@@ -3,7 +3,7 @@
  * Global State
  */
 let isDashboardOpen = false;
-let scannedItems = []; // { id, title, originalElement }
+let scannedItems = []; // { id, title, originalElement, url }
 let selectedIds = new Set();
 let isDragging = false;
 let startX = 0, startY = 0;
@@ -11,17 +11,20 @@ let dragBox = null;
 
 const PLATFORM_CONFIG = {
   chatgpt: {
-    // 更加通用的选择器：查找包含 /c/ 的链接
-    item: 'li:has(a[href*="/c/"]), [data-testid^="history-item-"], .relative.group:has(a[href*="/c/"])',
-    title: 'a[href*="/c/"]', 
+    // 侧边栏对话条目的容器
     container: 'nav',
-    menuBtn: 'button[id^="radix-"], button[aria-haspopup="menu"], .group button',
+    // 查找所有对话链接，ChatGPT 对话链接通常包含 /c/
+    itemSelector: 'li:has(a[href*="/c/"])',
+    // 标题通常在 a 标签内的 div 中
+    titleSelector: 'a[href*="/c/"]',
+    // 菜单按钮通常是 a 标签同级的 button 或内部的 radix 按钮
+    menuBtnSelector: 'button[aria-haspopup="menu"], button[id^="radix-"], .group button'
   },
   gemini: {
-    item: 'div[role="listitem"], a.conversation-container, .history-item:has(a)',
-    title: 'a, .conversation-title, .custom-label',
     container: 'nav',
-    menuBtn: 'button[aria-haspopup="true"], .more-actions-button',
+    itemSelector: 'div[role="listitem"]:has(a[href*="/app/"])',
+    titleSelector: 'a',
+    menuBtnSelector: 'button[aria-haspopup="true"]'
   }
 };
 
@@ -33,38 +36,41 @@ const getPlatform = () => {
 };
 
 /**
- * 扫描当前页面侧边栏已加载的对话
+ * 深度扫描真实对话历史
  */
 const scanHistory = () => {
   const platform = getPlatform();
   if (!platform) return [];
   
   const config = PLATFORM_CONFIG[platform];
-  // 尝试多种可能的选择器组合
-  let items = Array.from(document.querySelectorAll(config.item));
-  
-  // 如果没搜到，尝试兜底逻辑：查找所有包含对话链接的 A 标签
-  if (items.length === 0) {
-    items = Array.from(document.querySelectorAll('nav a[href*="/c/"]')).map(a => a.closest('li') || a.parentElement);
-  }
-
+  // 获取所有可能的条目
+  const items = Array.from(document.querySelectorAll(config.itemSelector));
   const results = [];
-  const seenTitles = new Set();
 
   items.forEach((el, index) => {
-    if (!el) return;
-    
-    const titleEl = el.querySelector(config.title) || el;
-    let title = titleEl.innerText.trim().split('\n')[0]; // 只取第一行标题
-    
-    if (!title || title.length < 1) title = `Chat ${index + 1}`;
-    
-    // 生成唯一 ID
-    const id = `item-${index}-${title.replace(/\s+/g, '-').substring(0, 20)}`;
-    
-    // 过滤掉重复的元素（某些选择器可能会选中嵌套元素）
-    if (!results.some(r => r.originalElement === el)) {
-      results.push({ id, title, originalElement: el });
+    // 提取标题：优先找链接里的文本，过滤掉多余的换行和空白
+    const linkEl = el.querySelector(config.titleSelector);
+    if (!linkEl) return;
+
+    // 尝试获取最纯净的标题文本
+    // ChatGPT 的结构通常是 <a><div>...title...</div></a>
+    let title = linkEl.innerText.split('\n')[0].trim();
+    const url = linkEl.getAttribute('href');
+
+    // 过滤掉明显的非对话项（如“New Chat”）
+    if (!title || title.toLowerCase().includes('new chat') || title.length < 1) return;
+
+    // 生成唯一标识，使用 URL 或 索引+标题
+    const id = url ? `id-${url.split('/').pop()}` : `item-${index}`;
+
+    // 避免重复抓取
+    if (!results.some(r => r.id === id)) {
+      results.push({
+        id,
+        title,
+        url,
+        originalElement: el
+      });
     }
   });
   
@@ -102,12 +108,16 @@ const renderDashboard = () => {
   if (scannedItems.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
-        <div class="empty-icon">🔍</div>
-        <h3>No Chats Found</h3>
-        <p>Make sure your chat history is visible in the sidebar, then try refreshing.</p>
-        <button onclick="window.dispatchEvent(new CustomEvent('refresh-history'))" class="btn-primary">Scan Again</button>
+        <div class="empty-icon">📂</div>
+        <h3>No Real Conversations Found</h3>
+        <p>We couldn't detect your chat list. Please make sure the sidebar is open and you are logged in.</p>
+        <button id="retry-scan-btn" class="btn-primary">Try Deep Scan</button>
       </div>
     `;
+    document.getElementById('retry-scan-btn')?.addEventListener('click', () => {
+      scannedItems = scanHistory();
+      renderDashboard();
+    });
     return;
   }
   
@@ -142,85 +152,84 @@ const updateDashboardUI = () => {
   });
 
   const countLabel = document.getElementById('selected-count-label');
-  if (countLabel) countLabel.innerText = `${selectedIds.size} Selected`;
+  if (countLabel) countLabel.innerText = `${selectedIds.size} Chats Selected`;
   
   const deleteBtn = document.getElementById('dash-delete-btn');
   if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0;
 };
 
 /**
- * 批量删除逻辑
+ * 自动化批量删除逻辑
  */
 const runBatchDelete = async () => {
-  const count = selectedIds.size;
-  if (!confirm(`Confirm batch deletion of ${count} chats?\n\nThis will simulate clicking the 'Delete' button for each selected chat in the sidebar.`)) return;
+  const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
+  if (toDelete.length === 0) return;
+
+  if (!confirm(`Confirm deletion of ${toDelete.length} conversations?\nThis will interact with the sidebar buttons automatically.`)) return;
 
   const platform = getPlatform();
   const deleteBtn = document.getElementById('dash-delete-btn');
   const originalText = deleteBtn.innerText;
   
-  deleteBtn.innerText = 'Deleting...';
+  deleteBtn.innerText = 'Processing...';
   deleteBtn.disabled = true;
-
-  const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
 
   for (const item of toDelete) {
     try {
       const el = item.originalElement;
       const config = PLATFORM_CONFIG[platform];
       
-      // 1. 寻找菜单按钮 (...)
-      let menuBtn = el.querySelector(config.menuBtn);
+      // 1. 触发菜单按钮
+      let menuBtn = el.querySelector(config.menuBtnSelector);
       
-      // 特殊处理：有些菜单按钮是隐藏的，需要先 hover 或直接寻找
+      // 如果没找到，尝试在 el 中找任何有 "..." 或 "More" 的按钮
       if (!menuBtn) {
-        // 尝试在元素内寻找任何按钮
-        menuBtn = el.querySelector('button');
+        menuBtn = Array.from(el.querySelectorAll('button')).find(b => b.innerText.includes('...') || b.getAttribute('aria-haspopup'));
       }
 
       if (menuBtn) {
         menuBtn.click();
-        await new Promise(r => setTimeout(r, 600)); // 等待菜单弹出
+        await new Promise(r => setTimeout(r, 700)); // 稍长一点等待 React 渲染菜单
         
-        // 2. 寻找删除选项
-        const menuItems = Array.from(document.querySelectorAll('[role="menuitem"], li[role="menuitem"], button, div'));
-        const deleteOption = menuItems.find(m => 
+        // 2. 寻找删除选项（通常在 body 底部或 portal 中）
+        const allPossibleMenuItems = Array.from(document.querySelectorAll('[role="menuitem"], button, div'));
+        const deleteOption = allPossibleMenuItems.find(m => 
           m.innerText.toLowerCase().includes('delete') && 
-          m.offsetParent !== null // 必须是可见的
+          m.offsetParent !== null
         );
 
         if (deleteOption) {
           deleteOption.click();
-          await new Promise(r => setTimeout(r, 600)); // 等待确认弹窗
+          await new Promise(r => setTimeout(r, 700));
           
-          // 3. 寻找确认删除按钮
-          const confirmButtons = Array.from(document.querySelectorAll('button'));
-          const confirmBtn = confirmButtons.find(b => 
-            b.innerText.toLowerCase().includes('delete') && 
-            b.classList.contains('bg-red-600') || b.innerText.toLowerCase().includes('confirm')
+          // 3. 寻找确认按钮
+          const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => 
+            (b.innerText.toLowerCase().includes('delete') || b.innerText.toLowerCase().includes('confirm')) &&
+            (b.classList.contains('bg-red-600') || b.classList.contains('btn-danger') || b.style.backgroundColor.includes('red'))
           );
           
-          if (confirmBtn) confirmBtn.click();
+          if (confirmBtn) {
+            confirmBtn.click();
+            // 成功后在 UI 中移除
+            selectedIds.delete(item.id);
+            scannedItems = scannedItems.filter(i => i.id !== item.id);
+            renderDashboard();
+            updateDashboardUI();
+          }
         }
       }
-      
-      selectedIds.delete(item.id);
-      scannedItems = scannedItems.filter(i => i.id !== item.id);
-      renderDashboard();
-      updateDashboardUI();
-      await new Promise(r => setTimeout(r, 1000)); // 间隔一段时间再删下一个，防止 UI 崩溃
+      await new Promise(r => setTimeout(r, 800)); // 间隔
     } catch (e) {
-      console.error('Failed to delete', item.title, e);
+      console.error('Batch delete error for:', item.title, e);
     }
   }
 
   deleteBtn.innerText = originalText;
   deleteBtn.disabled = selectedIds.size === 0;
-  alert('Batch operation finished.');
 };
 
 /**
- * 初始化弹窗 DOM
+ * 初始化
  */
 const initOverlay = () => {
   if (document.getElementById('history-manager-overlay')) return;
@@ -231,16 +240,12 @@ const initOverlay = () => {
     <div class="dashboard-window">
       <div class="dashboard-header">
         <div class="header-info">
-          <h2>Chat History Manager</h2>
-          <p>Drag to select multiple chats. Only currently loaded items are shown.</p>
+          <h2>Batch History Manager</h2>
+          <p>Scanned conversations from your sidebar. Drag to select.</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
-      
-      <div id="dashboard-items-grid" class="dashboard-body">
-        <!-- Cards will be injected here -->
-      </div>
-
+      <div id="dashboard-items-grid" class="dashboard-body"></div>
       <div class="dashboard-footer">
         <span id="selected-count-label">0 Selected</span>
         <div class="footer-actions">
@@ -251,31 +256,21 @@ const initOverlay = () => {
     </div>
   `;
   document.body.appendChild(overlay);
-
-  // 绑定基础事件
   document.getElementById('close-dash-btn').onclick = toggleDashboard;
-  
-  const refreshHandler = () => {
+  document.getElementById('dash-refresh-btn').onclick = () => {
     scannedItems = scanHistory();
     renderDashboard();
     updateDashboardUI();
   };
-  
-  document.getElementById('dash-refresh-btn').onclick = refreshHandler;
-  window.addEventListener('refresh-history', refreshHandler);
-  
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 
   // 框选逻辑
   const grid = document.getElementById('dashboard-items-grid');
   grid.onmousedown = (e) => {
-    // 只有点击空白处或网格本身才触发框选，点击卡片不触发
     if (e.target.closest('.chat-card')) return;
-    
     isDragging = true;
     startX = e.clientX;
     startY = e.clientY;
-    
     if (dragBox) dragBox.remove();
     dragBox = document.createElement('div');
     dragBox.className = 'dashboard-drag-box';
@@ -288,21 +283,16 @@ const initOverlay = () => {
     const top = Math.min(startY, e.clientY);
     const width = Math.abs(e.clientX - startX);
     const height = Math.abs(e.clientY - startY);
-
     dragBox.style.left = `${left}px`;
     dragBox.style.top = `${top}px`;
     dragBox.style.width = `${width}px`;
     dragBox.style.height = `${height}px`;
 
-    // 检测卡片相交
     const cards = grid.querySelectorAll('.chat-card');
     cards.forEach(card => {
       const rect = card.getBoundingClientRect();
       const intersects = !(rect.right < left || rect.left > left + width || rect.bottom < top || rect.top > top + height);
-      if (intersects) {
-        const id = card.getAttribute('data-id');
-        selectedIds.add(id);
-      }
+      if (intersects) selectedIds.add(card.getAttribute('data-id'));
     });
     updateDashboardUI();
   };
@@ -313,40 +303,24 @@ const initOverlay = () => {
   };
 };
 
-/**
- * 注入页面上的启动按钮
- */
 const injectLauncher = () => {
   const platform = getPlatform();
   if (!platform || document.getElementById('history-manager-launcher')) return;
-
-  const btn = document.createElement('button');
-  btn.id = 'history-manager-launcher';
-  btn.innerHTML = `
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>
-    Bulk Manage
-  `;
-  btn.onclick = toggleDashboard;
-
-  // 寻找侧边栏容器
   const config = PLATFORM_CONFIG[platform];
   const nav = document.querySelector(config.container);
   if (nav) {
-    // 如果已经有按钮了就不加了
-    if (nav.querySelector('#history-manager-launcher')) return;
+    const btn = document.createElement('button');
+    btn.id = 'history-manager-launcher';
+    btn.innerHTML = `<span>⚡ Manage History</span>`;
+    btn.onclick = toggleDashboard;
     nav.prepend(btn);
   }
 };
 
-// 监听 DOM 变化以便重新注入按钮
 const observer = new MutationObserver(() => {
   injectLauncher();
   initOverlay();
 });
 observer.observe(document.body, { childList: true, subtree: true });
 
-// 初始化尝试
-setTimeout(() => {
-  injectLauncher();
-  initOverlay();
-}, 1000);
+setTimeout(() => { injectLauncher(); initOverlay(); }, 1000);

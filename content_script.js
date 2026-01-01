@@ -15,13 +15,13 @@ const PLATFORM_CONFIG = {
     container: 'nav, [role="navigation"]',
     itemSelector: 'a[data-sidebar-item="true"][href*="/c/"]',
     titleSelector: '.truncate span, .truncate',
-    // 根据 Recorder：菜单按钮带有 data-testid 且以 -options 结尾
-    menuBtnSelector: '[data-testid$="-options"], .trailing-pair, button[aria-haspopup="menu"]',
-    // 根据 Recorder：删除选项有唯一的 data-testid
+    // 根据用户提供：侧边栏“更多”按钮在 .trailing-pair 内部的第二个 div
+    menuBtnSelector: '.trailing-pair > div:nth-child(2), .trailing-pair, [data-testid$="-options"]',
+    // 根据用户提供：菜单中的删除选项有固定的 data-testid
     deleteOptionSelector: '[data-testid="delete-chat-menu-item"]',
-    deleteOptionTexts: ['delete', '删除'],
-    // 根据 Recorder：确认按钮有唯一的 data-testid
+    // 根据用户提供：二次确认弹窗中的删除按钮有固定的 data-testid
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
+    deleteOptionTexts: ['delete', '删除'],
     confirmBtnTexts: ['delete', '删除', 'confirm', '确认']
   },
   gemini: {
@@ -30,8 +30,8 @@ const PLATFORM_CONFIG = {
     titleSelector: 'a, .conversation-title',
     menuBtnSelector: 'button[aria-haspopup="true"]',
     deleteOptionSelector: '[role="menuitem"]',
-    deleteOptionTexts: ['delete', '删除'],
     confirmBtnSelector: 'button',
+    deleteOptionTexts: ['delete', '删除'],
     confirmBtnTexts: ['delete', '删除', 'confirm', '确认']
   }
 };
@@ -118,7 +118,7 @@ const renderDashboard = () => {
       <div class="empty-state">
         <div class="empty-icon">📂</div>
         <h3>No Conversations Found</h3>
-        <p>Ensure sidebar is expanded and you have some history. Scroll to load more items.</p>
+        <p>Ensure sidebar is expanded. Scroll the sidebar to load items.</p>
         <button id="retry-scan-btn" class="btn-primary">Refresh List</button>
       </div>
     `;
@@ -167,13 +167,13 @@ const updateDashboardUI = () => {
 };
 
 /**
- * 核心批量删除逻辑
+ * 核心批量删除逻辑：逐个模拟真实点击
  */
 const runBatchDelete = async () => {
   const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
   if (toDelete.length === 0) return;
 
-  if (!confirm(`Confirm batch deletion of ${toDelete.length} chats?\nWarning: This simulates real clicks.`)) return;
+  if (!confirm(`Confirm batch deletion of ${toDelete.length} chats?\nWarning: This will simulate real UI interactions.`)) return;
 
   isProcessing = true;
   const platform = getPlatform();
@@ -186,34 +186,33 @@ const runBatchDelete = async () => {
 
   for (let i = 0; i < toDelete.length; i++) {
     const item = toDelete[i];
-    deleteBtn.innerText = `Deleting ${i+1}/${toDelete.length}: ${item.title.substring(0, 10)}...`;
+    deleteBtn.innerText = `Deleting (${i+1}/${toDelete.length}): ${item.title.substring(0, 10)}...`;
     
     try {
+      // 1. 获取并激活侧边栏元素
       const el = item.originalElement;
-      
-      // 1. 滚动并显示菜单按钮
       el.scrollIntoView({ block: 'center', behavior: 'instant' });
-      // 模拟鼠标进入以激活可能存在的悬停状态
+      
+      // 模拟悬停，让“更多”按钮显现
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
       el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 500));
 
-      // 2. 点击菜单按钮 (...)
+      // 2. 点击“更多”按钮
       let menuBtn = el.querySelector(config.menuBtnSelector);
       if (!menuBtn) {
-        // 容错：如果找不到 testid，尝试寻找带有省略号图标的按钮
-        menuBtn = el.querySelector('button, .trailing-pair');
+        // 容错：如果特定选择器失败，尝试点击 item 内部的最后一个按钮或 div
+        menuBtn = el.querySelector('button, .trailing-pair div:last-child');
       }
 
       if (menuBtn) {
         console.log(`Clicking menu button for: ${item.title}`);
         menuBtn.click();
-        await new Promise(r => setTimeout(r, 800)); // 等待菜单弹出
         
-        // 3. 寻找删除选项
+        // 3. 等待并点击“删除”菜单项
         try {
           const deleteOption = await waitForElement(
-            config.deleteOptionSelector + ', [role="menuitem"], button, div',
+            config.deleteOptionSelector + ', [role="menuitem"], button',
             (m) => {
               if (m.matches(config.deleteOptionSelector)) return true;
               const text = m.innerText.toLowerCase();
@@ -223,11 +222,11 @@ const runBatchDelete = async () => {
           
           console.log(`Clicking delete option for: ${item.title}`);
           deleteOption.click();
-          await new Promise(r => setTimeout(r, 800)); // 等待二次确认对话框
-          
-          // 4. 寻找确认按钮
+          await new Promise(r => setTimeout(r, 1000)); // 等待确认弹窗弹出
+
+          // 4. 等待并点击“确认删除”按钮
           const confirmBtn = await waitForElement(
-            config.confirmBtnSelector + ', button',
+            config.confirmBtnSelector + ', button.btn-danger',
             (b) => {
               if (b.matches(config.confirmBtnSelector)) return true;
               const text = b.innerText.toLowerCase();
@@ -235,20 +234,20 @@ const runBatchDelete = async () => {
             }
           );
           
-          console.log(`Clicking confirm button for: ${item.title}`);
+          console.log(`Clicking confirm delete button for: ${item.title}`);
           confirmBtn.click();
 
-          // 等待删除动作真正完成
+          // 等待删除请求发送并完成 UI 更新
           await new Promise(r => setTimeout(r, 2000));
           
-          // 成功后更新 UI
+          // 更新管理面板状态
           selectedIds.delete(item.id);
           scannedItems = scannedItems.filter(it => it.id !== item.id);
           renderDashboard();
           updateDashboardUI();
         } catch (innerError) {
-          console.error(`Step failed for item "${item.title}":`, innerError);
-          // 出现错误时尝试按 Esc 退出可能的菜单遮罩
+          console.error(`Deletion flow failed for "${item.title}":`, innerError);
+          // 尝试按 Esc 退出可能阻塞的弹窗
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
           await new Promise(r => setTimeout(r, 500));
         }
@@ -256,16 +255,17 @@ const runBatchDelete = async () => {
         console.warn(`Menu button not found for: ${item.title}`);
       }
     } catch (e) {
-      console.error('Batch error for item:', item.title, e);
+      console.error('Batch loop error:', item.title, e);
     }
     
-    await new Promise(r => setTimeout(r, 600));
+    // 操作间隔，防止速度过快导致页面异常
+    await new Promise(r => setTimeout(r, 800));
   }
 
   isProcessing = false;
   deleteBtn.innerText = originalText;
   updateDashboardUI();
-  alert('Batch process finished.');
+  alert('Batch deletion complete.');
 };
 
 const initOverlay = () => {
@@ -278,7 +278,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>Bulk Manage History</h2>
-          <p>Drag to select chats. Items must be visible in sidebar for deletion.</p>
+          <p>Drag to multi-select chats. Ensure sidebar is visible for automatic deletion.</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>

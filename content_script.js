@@ -2,24 +2,23 @@
 /**
  * Global State
  */
-let isMultiSelectActive = false;
-let selectedItems = new Map();
+let isDashboardOpen = false;
+let scannedItems = []; // { id, title, originalElement }
+let selectedIds = new Set();
 let isDragging = false;
-let startX = 0;
-let startY = 0;
+let startX = 0, startY = 0;
 let dragBox = null;
-let toolbarContainer = null;
 
 const PLATFORM_CONFIG = {
   chatgpt: {
-    // 适配 ChatGPT 列表条目
     item: 'li:has(a[href^="/c/"]), li[data-testid^="history-item-"]',
+    title: '.truncate',
     container: 'nav',
     menuBtn: 'button[id^="radix-"], button[aria-haspopup="menu"]',
   },
   gemini: {
-    // 适配 Gemini 列表条目
     item: 'div[role="listitem"], a.conversation-container',
+    title: '.conversation-title, .custom-label',
     container: 'nav',
     menuBtn: 'button[aria-haspopup="true"]',
   }
@@ -32,242 +31,237 @@ const getPlatform = () => {
   return null;
 };
 
-const toggleMultiSelectMode = () => {
-  isMultiSelectActive = !isMultiSelectActive;
-  
-  const toggleBtn = document.getElementById('history-manager-toggle');
-  if (toggleBtn) {
-    toggleBtn.style.background = isMultiSelectActive ? '#4f46e5' : 'rgba(79, 70, 229, 0.1)';
-    toggleBtn.style.color = isMultiSelectActive ? '#ffffff' : '#4f46e5';
-    toggleBtn.querySelector('.status-text').textContent = isMultiSelectActive ? 'ON' : 'OFF';
-  }
-
-  // 为列表容器添加/移除模式类，以便通过 CSS 控制悬停效果
+/**
+ * 扫描当前页面侧边栏已加载的对话
+ */
+const scanHistory = () => {
   const platform = getPlatform();
-  const nav = document.querySelector(PLATFORM_CONFIG[platform]?.container || 'nav');
-  if (nav) {
-    if (isMultiSelectActive) nav.classList.add('manager-active');
-    else nav.classList.remove('manager-active');
-  }
-
-  if (!isMultiSelectActive) {
-    selectedItems.clear();
-    removeToolbar();
-    document.body.style.cursor = 'default';
-  } else {
-    injectToolbar();
-    document.body.style.cursor = 'crosshair';
-  }
-  updateSelectionUI();
+  if (!platform) return [];
+  
+  const items = document.querySelectorAll(PLATFORM_CONFIG[platform].item);
+  const results = [];
+  
+  items.forEach((el, index) => {
+    const titleEl = el.querySelector(PLATFORM_CONFIG[platform].title);
+    const title = titleEl ? titleEl.innerText.trim() : `Untitled Chat ${index + 1}`;
+    // 使用索引和标题组合作为 ID 避免重复
+    const id = `item-${index}-${title.substring(0, 10)}`;
+    results.push({ id, title, originalElement: el });
+  });
+  
+  return results;
 };
 
-const updateSelectionUI = () => {
-  const platform = getPlatform();
-  if (!platform) return;
+/**
+ * 切换仪表盘显示
+ */
+const toggleDashboard = () => {
+  isDashboardOpen = !isDashboardOpen;
+  const overlay = document.getElementById('history-manager-overlay');
+  
+  if (isDashboardOpen) {
+    scannedItems = scanHistory();
+    selectedIds.clear();
+    renderDashboard();
+    overlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden'; // 禁止页面滚动
+  } else {
+    overlay.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+};
 
-  const items = document.querySelectorAll(PLATFORM_CONFIG[platform].item);
-  items.forEach((item) => {
-    // 使用条目的文本内容或特定属性作为唯一标识
-    const id = item.innerText.trim().substring(0, 100);
-    if (selectedItems.has(id)) {
-      item.classList.add('history-item-selecting');
-    } else {
-      item.classList.remove('history-item-selecting');
-    }
+/**
+ * 渲染仪表盘内容
+ */
+const renderDashboard = () => {
+  const container = document.getElementById('dashboard-items-grid');
+  if (!container) return;
+  
+  container.innerHTML = scannedItems.map(item => `
+    <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
+      <div class="card-icon">💬</div>
+      <div class="card-title">${item.title}</div>
+      <div class="card-checkbox"></div>
+    </div>
+  `).join('');
+
+  // 重新绑定点击事件
+  container.querySelectorAll('.chat-card').forEach(card => {
+    card.onclick = (e) => {
+      const id = card.getAttribute('data-id');
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      updateDashboardUI();
+      e.stopPropagation();
+    };
+  });
+};
+
+const updateDashboardUI = () => {
+  const container = document.getElementById('dashboard-items-grid');
+  container.querySelectorAll('.chat-card').forEach(card => {
+    const id = card.getAttribute('data-id');
+    if (selectedIds.has(id)) card.classList.add('selected');
+    else card.classList.remove('selected');
   });
 
-  if (toolbarContainer) {
-    const countEl = toolbarContainer.querySelector('#selected-count');
-    if (countEl) countEl.textContent = `${selectedItems.size} Selected`;
-    const deleteBtn = toolbarContainer.querySelector('#batch-delete-btn');
-    if (deleteBtn) {
-      deleteBtn.disabled = selectedItems.size === 0;
-      deleteBtn.style.opacity = selectedItems.size === 0 ? '0.5' : '1';
-    }
-  }
+  document.getElementById('selected-count-label').innerText = `${selectedIds.size} Selected`;
+  document.getElementById('dash-delete-btn').disabled = selectedIds.size === 0;
 };
 
-const injectToolbar = () => {
-  if (toolbarContainer) return;
-  toolbarContainer = document.createElement('div');
-  toolbarContainer.className = 'batch-toolbar-container fixed bottom-8 left-1/2 -translate-x-1/2 z-[99999]';
-  toolbarContainer.innerHTML = `
-    <div style="background: #1e293b; color: white; border-radius: 16px; padding: 12px 24px; display: flex; align-items: center; gap: 24px; border: 1px solid #334155; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);">
-      <div style="display: flex; flex-direction: column;">
-        <span id="selected-count" style="font-weight: 700; font-size: 14px;">0 Selected</span>
-        <span style="font-size: 11px; color: #94a3b8;">🖱️ Click or Drag list items to select</span>
-      </div>
-      <div style="width: 1px; height: 32px; background: #334155;"></div>
-      <div style="display: flex; gap: 10px;">
-        <button id="batch-delete-btn" disabled style="background: #ef4444; color: white; padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s;">Delete</button>
-        <button id="cancel-batch-btn" style="background: #475569; color: white; padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none;">Exit</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(toolbarContainer);
-  toolbarContainer.querySelector('#batch-delete-btn').addEventListener('click', startBatchDelete);
-  toolbarContainer.querySelector('#cancel-batch-btn').addEventListener('click', toggleMultiSelectMode);
-};
-
-const removeToolbar = () => {
-  if (toolbarContainer) {
-    toolbarContainer.remove();
-    toolbarContainer = null;
-  }
-};
-
-const startBatchDelete = async () => {
-  const count = selectedItems.size;
-  if (!confirm(`Confirm batch deletion of ${count} chats? This simulation will attempt to click the UI menus.`)) return;
+/**
+ * 批量删除逻辑
+ */
+const runBatchDelete = async () => {
+  const count = selectedIds.size;
+  if (!confirm(`Are you sure to delete ${count} chats?\nThis will automate clicks on your sidebar.`)) return;
 
   const platform = getPlatform();
-  const items = Array.from(selectedItems.values());
-  
-  for (const item of items) {
+  const deleteBtn = document.getElementById('dash-delete-btn');
+  deleteBtn.innerText = 'Deleting...';
+  deleteBtn.disabled = true;
+
+  const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
+
+  for (const item of toDelete) {
     try {
-      // 这里的逻辑依赖于平台 UI，如果 UI 变动可能失效，但作为插件演示是核心流程
-      const menuBtn = item.querySelector(PLATFORM_CONFIG[platform].menuBtn);
+      const el = item.originalElement;
+      const menuBtn = el.querySelector(PLATFORM_CONFIG[platform].menuBtn);
       if (menuBtn) {
         menuBtn.click();
-        await new Promise(r => setTimeout(r, 600));
+        await new Promise(r => setTimeout(r, 500));
         
         const menuItems = document.querySelectorAll('[role="menuitem"], li[role="menuitem"], .flex.items-center.gap-2.p-3');
         for (const m of Array.from(menuItems)) {
           if (m.innerText.toLowerCase().includes('delete')) {
             m.click();
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 500));
             const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.toLowerCase().includes('delete'));
             if (confirmBtn) confirmBtn.click();
             break;
           }
         }
       }
-      const id = item.innerText.trim().substring(0, 100);
-      selectedItems.delete(id);
-      updateSelectionUI();
-      await new Promise(r => setTimeout(r, 800));
+      selectedIds.delete(item.id);
+      renderDashboard();
+      updateDashboardUI();
+      await new Promise(r => setTimeout(r, 700));
     } catch (e) {
-      console.error('Delete process failed for an item', e);
+      console.error('Failed to delete', item.title, e);
     }
   }
+
+  deleteBtn.innerText = 'Delete Selected';
+  alert('Batch deletion complete.');
 };
 
-const initDragEvents = () => {
-  window.addEventListener('mousedown', (e) => {
-    if (!isMultiSelectActive) return;
-    // 如果点击的是工具栏或按钮，不触发拖拽
-    if (toolbarContainer?.contains(e.target) || document.getElementById('history-manager-toggle')?.contains(e.target)) return;
+/**
+ * 初始化弹窗 DOM
+ */
+const initOverlay = () => {
+  if (document.getElementById('history-manager-overlay')) return;
 
+  const overlay = document.createElement('div');
+  overlay.id = 'history-manager-overlay';
+  overlay.innerHTML = `
+    <div class="dashboard-window">
+      <div class="dashboard-header">
+        <div class="header-info">
+          <h2>Chat History Manager</h2>
+          <p>Drag to select multiple chats. Only currently loaded items are shown.</p>
+        </div>
+        <button id="close-dash-btn">✕</button>
+      </div>
+      
+      <div id="dashboard-items-grid" class="dashboard-body">
+        <!-- Cards will be injected here -->
+      </div>
+
+      <div class="dashboard-footer">
+        <span id="selected-count-label">0 Selected</span>
+        <div class="footer-actions">
+          <button id="dash-refresh-btn">Refresh List</button>
+          <button id="dash-delete-btn" class="danger" disabled>Delete Selected</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // 绑定基础事件
+  document.getElementById('close-dash-btn').onclick = toggleDashboard;
+  document.getElementById('dash-refresh-btn').onclick = () => {
+    scannedItems = scanHistory();
+    renderDashboard();
+    updateDashboardUI();
+  };
+  document.getElementById('dash-delete-btn').onclick = runBatchDelete;
+
+  // 框选逻辑
+  const grid = document.getElementById('dashboard-items-grid');
+  grid.onmousedown = (e) => {
+    if (e.target !== grid && !grid.contains(e.target)) return;
     isDragging = true;
     startX = e.clientX;
     startY = e.clientY;
+    dragBox = document.createElement('div');
+    dragBox.className = 'dashboard-drag-box';
+    document.body.appendChild(dragBox);
+  };
 
-    if (!dragBox) {
-      dragBox = document.createElement('div');
-      dragBox.id = 'multi-select-drag-box';
-      document.body.appendChild(dragBox);
-    }
-  });
-
-  window.addEventListener('mousemove', (e) => {
+  window.onmousemove = (e) => {
     if (!isDragging || !dragBox) return;
-
-    const currentX = e.clientX;
-    const currentY = e.clientY;
-
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
+    const left = Math.min(startX, e.clientX);
+    const top = Math.min(startY, e.clientY);
+    const width = Math.abs(e.clientX - startX);
+    const height = Math.abs(e.clientY - startY);
 
     dragBox.style.left = `${left}px`;
     dragBox.style.top = `${top}px`;
     dragBox.style.width = `${width}px`;
     dragBox.style.height = `${height}px`;
 
-    const platform = getPlatform();
-    if (!platform) return;
-
-    const items = document.querySelectorAll(PLATFORM_CONFIG[platform].item);
-    items.forEach((item) => {
-      const rect = item.getBoundingClientRect();
-      const intersects = !(
-        rect.right < left ||
-        rect.left > left + width ||
-        rect.bottom < top ||
-        rect.top > top + height
-      );
-
-      if (intersects) {
-        const id = item.innerText.trim().substring(0, 100);
-        selectedItems.set(id, item);
-      }
+    // 检测卡片相交
+    const cards = grid.querySelectorAll('.chat-card');
+    cards.forEach(card => {
+      const rect = card.getBoundingClientRect();
+      const intersects = !(rect.right < left || rect.left > left + width || rect.bottom < top || rect.top > top + height);
+      const id = card.getAttribute('data-id');
+      if (intersects) selectedIds.add(id);
     });
-    updateSelectionUI();
-  });
+    updateDashboardUI();
+  };
 
-  window.addEventListener('mouseup', () => {
+  window.onmouseup = () => {
     isDragging = false;
-    if (dragBox) {
-      dragBox.remove();
-      dragBox = null;
-    }
-  });
-
-  // 处理单击选择
-  window.addEventListener('click', (e) => {
-    if (!isMultiSelectActive) return;
-    
-    const platform = getPlatform();
-    if (!platform) return;
-
-    // 检查是否点击了历史记录条目
-    const itemEl = e.target.closest(PLATFORM_CONFIG[platform].item);
-    if (itemEl) {
-      const id = itemEl.innerText.trim().substring(0, 100);
-      if (selectedItems.has(id)) {
-        selectedItems.delete(id);
-      } else {
-        selectedItems.set(id, itemEl);
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      updateSelectionUI();
-    }
-  }, true); // 使用捕获模式，确保在页面原生跳转逻辑前拦截
+    if (dragBox) { dragBox.remove(); dragBox = null; }
+  };
 };
 
-const injectModeButton = () => {
+/**
+ * 注入页面上的启动按钮
+ */
+const injectLauncher = () => {
   const platform = getPlatform();
-  if (!platform) return;
-  if (document.getElementById('history-manager-toggle')) return;
+  if (!platform || document.getElementById('history-manager-launcher')) return;
 
   const btn = document.createElement('button');
-  btn.id = 'history-manager-toggle';
-  btn.style.cssText = `
-    width: calc(100% - 16px); margin: 8px; padding: 12px; border-radius: 12px; border: 1px solid rgba(79, 70, 229, 0.4);
-    background: rgba(79, 70, 229, 0.1); color: #4f46e5; font-size: 13px; font-weight: 700; cursor: pointer;
-    display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; z-index: 1000;
-  `;
+  btn.id = 'history-manager-launcher';
   btn.innerHTML = `
-    <span style="display: flex; align-items: center; gap: 8px;">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4m-2 6v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2h9" /></svg>
-      Multi-Select
-    </span>
-    <span class="status-text" style="background: rgba(0,0,0,0.1); padding: 2px 8px; border-radius: 6px; font-size: 11px;">OFF</span>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>
+    Bulk Manage
   `;
-  btn.onclick = toggleMultiSelectMode;
+  btn.onclick = toggleDashboard;
 
-  const container = document.querySelector(PLATFORM_CONFIG[platform].container);
-  if (container) {
-    container.prepend(btn);
-  }
+  const nav = document.querySelector(PLATFORM_CONFIG[platform].container);
+  if (nav) nav.prepend(btn);
 };
 
-// 监听 DOM 变化以便重新注入按钮
-const observer = new MutationObserver(injectModeButton);
+const observer = new MutationObserver(() => {
+  injectLauncher();
+  initOverlay();
+});
 observer.observe(document.body, { childList: true, subtree: true });
 
-// 初始化
-initDragEvents();
-console.log('Chat History Multi-Manager: Content Script Loaded.');
+initOverlay();

@@ -5,16 +5,12 @@
 let isDashboardOpen = false;
 let scannedItems = []; 
 let selectedIds = new Set();
-let isDragging = false;
-let startX = 0, startY = 0;
-let dragBox = null;
 let isProcessing = false;
 
 const PLATFORM_CONFIG = {
   chatgpt: {
     linkSelector: 'a[href*="/c/"]',
-    // 目标：找到侧边栏项目中的“三个点”操作按钮
-    menuBtnSelector: 'button[aria-haspopup="menu"], [data-testid$="-options"], button:has(svg.lucide-ellipsis), .trailing-pair button',
+    menuBtnSelector: 'button[aria-haspopup="menu"], [data-testid$="-options"], button:has(svg.lucide-ellipsis)',
   },
   gemini: {
     linkSelector: 'a[href*="/app/"]',
@@ -23,36 +19,37 @@ const PLATFORM_CONFIG = {
 };
 
 /**
- * 强力点击：模拟真实用户点击行为
+ * 辅助函数：等待元素出现
  */
-const hardClick = (el) => {
-  if (!el) return;
-  const rect = el.getBoundingClientRect();
-  const clientX = rect.left + rect.width / 2;
-  const clientY = rect.top + rect.height / 2;
+const waitForElement = (selector, textKeywords = [], timeout = 3000) => {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const check = () => {
+      const elements = Array.from(document.querySelectorAll(selector));
+      const found = elements.find(el => {
+        const txt = (el.innerText || el.textContent || "").toLowerCase();
+        const isVisible = el.offsetParent !== null;
+        return isVisible && (textKeywords.length === 0 || textKeywords.some(k => txt.includes(k.toLowerCase())));
+      });
 
-  const opts = { bubbles: true, cancelable: true, view: window, clientX, clientY };
-  
-  // 模拟完整的交互链
-  ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
-    const ev = type.startsWith('pointer') 
-      ? new PointerEvent(type, { ...opts, pointerId: 1, isPrimary: true })
-      : new MouseEvent(type, opts);
-    el.dispatchEvent(ev);
+      if (found) resolve(found);
+      else if (Date.now() - startTime > timeout) resolve(null);
+      else requestAnimationFrame(check);
+    };
+    check();
   });
 };
 
 /**
- * 在全局查找包含特定文字的可点击元素
+ * 模拟真实点击
  */
-const findGlobalElementByText = (selector, texts) => {
-  // 注意：菜单和弹窗通常直接挂在 body 下，不在 item 内部
-  const elements = Array.from(document.querySelectorAll(selector));
-  return elements.find(el => {
-    const content = (el.innerText || el.textContent || "").toLowerCase();
-    const isVisible = el.offsetParent !== null;
-    return isVisible && texts.some(t => content.includes(t.toLowerCase()));
-  });
+const simulateClick = (el) => {
+  if (!el) return;
+  el.focus();
+  const opts = { bubbles: true, cancelable: true, view: window };
+  el.dispatchEvent(new MouseEvent('mousedown', opts));
+  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  el.dispatchEvent(new MouseEvent('click', opts));
 };
 
 const getPlatform = () => {
@@ -96,10 +93,97 @@ const scanHistory = () => {
       originalElement: container
     });
   });
-
+  console.log(`[Manager] 扫描到 ${results.length} 条记录`);
   return results;
 };
 
+/**
+ * 核心：删除单个会话的自动化流程
+ */
+const autoDeleteConversation = async (item, config) => {
+  console.log(`[Manager] 开始处理: ${item.title}`);
+  
+  // 1. 重新定位 DOM 元素（防止页面变化）
+  const allLinks = Array.from(document.querySelectorAll(config.linkSelector));
+  const targetLink = allLinks.find(l => l.getAttribute('href') === item.url);
+  if (!targetLink) return false;
+
+  const row = targetLink.closest('li') || targetLink.closest('[role="listitem"]') || targetLink.parentElement;
+  row.scrollIntoView({ block: 'center' });
+  
+  // 2. 触发 Hover
+  row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 300));
+
+  // 3. 点击“三个点”菜单
+  let menuBtn = row.querySelector(config.menuBtnSelector) || row.querySelector('button');
+  if (!menuBtn) return false;
+  simulateClick(menuBtn);
+
+  // 4. 等待弹出菜单中的“删除”按钮 (Search in global body)
+  const deleteKeys = ['删除', 'delete', 'remove', 'clear'];
+  const deleteMenuItem = await waitForElement('div[role="menuitem"], li[role="menuitem"], button', deleteKeys);
+  
+  if (!deleteMenuItem) {
+    console.error("未找到删除菜单项");
+    return false;
+  }
+  simulateClick(deleteMenuItem);
+
+  // 5. 等待确认弹窗中的“确认”按钮
+  const confirmKeys = ['确认', 'confirm', '删除', 'delete'];
+  const confirmBtn = await waitForElement('button.btn-danger, button', confirmKeys);
+  
+  if (!confirmBtn) {
+    console.error("未找到确认按钮");
+    return false;
+  }
+  
+  simulateClick(confirmBtn);
+  
+  // 6. 给后端一点响应时间
+  await new Promise(r => setTimeout(r, 1500));
+  return true;
+};
+
+const runBatchDelete = async () => {
+  const idsToDelete = Array.from(selectedIds);
+  if (!confirm(`确定要启动自动批量删除吗？\n将删除 ${idsToDelete.length} 条记录。\n\n运行期间请勿操作网页。`)) return;
+
+  isProcessing = true;
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  
+  overlay.style.opacity = "0.3";
+  overlay.style.pointerEvents = "none";
+
+  for (let id of idsToDelete) {
+    const item = scannedItems.find(it => it.id === id);
+    if (!item) continue;
+
+    const success = await autoDeleteConversation(item, config);
+    if (success) {
+      selectedIds.delete(id);
+      scannedItems = scannedItems.filter(it => it.id !== id);
+      renderDashboard();
+      updateDashboardUI();
+    }
+    // 强制按 ESC 清理残留
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  overlay.style.opacity = "1";
+  overlay.style.pointerEvents = "auto";
+  isProcessing = false;
+  updateDashboardUI();
+  alert('批量操作已完成。');
+};
+
+/**
+ * UI 渲染部分保持不变，仅修复样式关联
+ */
 const toggleDashboard = () => {
   if (isProcessing) return;
   const overlay = document.getElementById('history-manager-overlay');
@@ -131,7 +215,7 @@ const renderDashboard = () => {
   `).join('');
   
   container.querySelectorAll('.chat-card').forEach(card => {
-    card.onclick = () => {
+    card.onclick = (e) => {
       const id = card.getAttribute('data-id');
       if (selectedIds.has(id)) selectedIds.delete(id);
       else selectedIds.add(id);
@@ -151,87 +235,6 @@ const updateDashboardUI = () => {
   });
 };
 
-/**
- * 核心批量删除逻辑
- */
-const runBatchDelete = async () => {
-  const idsToDelete = Array.from(selectedIds);
-  if (!confirm(`确定要自动删除这 ${idsToDelete.length} 个对话吗？\n\n请在程序运行期间保持浏览器窗口置顶，不要操作鼠标。`)) return;
-
-  isProcessing = true;
-  const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
-  const overlay = document.getElementById('history-manager-overlay');
-  
-  // 保持弹窗显示但变淡，方便观察后台进度
-  overlay.style.opacity = "0.3";
-  overlay.style.pointerEvents = "none";
-
-  for (let id of idsToDelete) {
-    const item = scannedItems.find(it => it.id === id);
-    if (!item) continue;
-
-    // 重新在 DOM 中定位元素（防止页面刷新导致引用失效）
-    const allLinks = Array.from(document.querySelectorAll(config.linkSelector));
-    const targetLink = allLinks.find(l => l.getAttribute('href') === item.url);
-    if (!targetLink) {
-        console.warn(`跳过已不存在的项目: ${item.title}`);
-        continue;
-    }
-    const row = targetLink.closest('li') || targetLink.closest('[role="listitem"]') || targetLink.parentElement;
-
-    try {
-      // 1. 滚动并悬停 (Hover)
-      row.scrollIntoView({ block: 'center' });
-      row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 600));
-
-      // 2. 找到并点击“三个点”菜单按钮
-      let menuBtn = row.querySelector(config.menuBtnSelector);
-      if (!menuBtn) {
-          // 备选方案：找 row 里面唯一的那个按钮
-          menuBtn = row.querySelector('button');
-      }
-      
-      if (menuBtn) {
-        hardClick(menuBtn);
-        await new Promise(r => setTimeout(r, 1000)); // 等待菜单弹出
-
-        // 3. 在全局（Body）寻找“删除”按钮
-        const deleteMenuItem = findGlobalElementByText('div[role="menuitem"], li[role="menuitem"], button, span', ['删除', 'Delete']);
-        if (deleteMenuItem) {
-          hardClick(deleteMenuItem);
-          await new Promise(r => setTimeout(r, 1000)); // 等待确认弹窗
-
-          // 4. 在全局寻找“确认删除”按钮
-          const confirmBtn = findGlobalElementByText('button', ['确认', 'Confirm', '删除', 'Delete']);
-          if (confirmBtn) {
-            hardClick(confirmBtn);
-            // 5. 等待系统删除动画和同步
-            await new Promise(r => setTimeout(r, 2500)); 
-            
-            selectedIds.delete(id);
-            scannedItems = scannedItems.filter(it => it.id !== id);
-            renderDashboard();
-            updateDashboardUI();
-          }
-        }
-      }
-      // 尝试清理可能卡住的菜单或弹窗
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    } catch (err) {
-      console.error("自动化执行出错:", err);
-    }
-  }
-
-  overlay.style.opacity = "1";
-  overlay.style.pointerEvents = "auto";
-  isProcessing = false;
-  updateDashboardUI();
-  alert('批量删除任务执行完毕。');
-};
-
 const initOverlay = () => {
   if (document.getElementById('history-manager-overlay')) return;
   const overlay = document.createElement('div');
@@ -241,7 +244,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>批量管理助手</h2>
-          <p>选中对话，点击下方按钮开始自动化删除流程。</p>
+          <p>请保持在历史记录可见的状态下运行。</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>

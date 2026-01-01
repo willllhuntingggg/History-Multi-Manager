@@ -11,19 +11,19 @@ let dragBox = null;
 
 const PLATFORM_CONFIG = {
   chatgpt: {
-    // 侧边栏对话条目的容器
-    container: 'nav',
-    // 查找所有对话链接，ChatGPT 对话链接通常包含 /c/
-    itemSelector: 'li:has(a[href*="/c/"])',
-    // 标题通常在 a 标签内的 div 中
-    titleSelector: 'a[href*="/c/"]',
-    // 菜单按钮通常是 a 标签同级的 button 或内部的 radix 按钮
-    menuBtnSelector: 'button[aria-haspopup="menu"], button[id^="radix-"], .group button'
+    // 侧边栏容器
+    container: 'nav, [role="navigation"]',
+    // 根据截图：a 标签带有 data-sidebar-item="true" 且包含 /c/ 路径
+    itemSelector: 'a[data-sidebar-item="true"][href*="/c/"]',
+    // 标题在 .truncate 内部的 span 中
+    titleSelector: '.truncate span, .truncate',
+    // 菜单按钮在 .trailing-pair 中，或者直接找三个点的图标/按钮
+    menuBtnSelector: '.trailing-pair, [aria-haspopup="menu"]'
   },
   gemini: {
     container: 'nav',
     itemSelector: 'div[role="listitem"]:has(a[href*="/app/"])',
-    titleSelector: 'a',
+    titleSelector: 'a, .conversation-title',
     menuBtnSelector: 'button[aria-haspopup="true"]'
   }
 };
@@ -43,27 +43,24 @@ const scanHistory = () => {
   if (!platform) return [];
   
   const config = PLATFORM_CONFIG[platform];
-  // 获取所有可能的条目
+  // 截图显示所有的对话都在 id="history" 的 div 下面的 a 标签里
   const items = Array.from(document.querySelectorAll(config.itemSelector));
   const results = [];
 
   items.forEach((el, index) => {
-    // 提取标题：优先找链接里的文本，过滤掉多余的换行和空白
-    const linkEl = el.querySelector(config.titleSelector);
-    if (!linkEl) return;
+    // 提取标题：定位到 .truncate 里的 span
+    const titleEl = el.querySelector(config.titleSelector);
+    if (!titleEl) return;
 
-    // 尝试获取最纯净的标题文本
-    // ChatGPT 的结构通常是 <a><div>...title...</div></a>
-    let title = linkEl.innerText.split('\n')[0].trim();
-    const url = linkEl.getAttribute('href');
+    let title = titleEl.innerText.trim();
+    const url = el.getAttribute('href');
 
-    // 过滤掉明显的非对话项（如“New Chat”）
-    if (!title || title.toLowerCase().includes('new chat') || title.length < 1) return;
+    // 过滤掉明显的非对话项
+    if (!title || title.length < 1) return;
 
-    // 生成唯一标识，使用 URL 或 索引+标题
+    // 生成唯一标识
     const id = url ? `id-${url.split('/').pop()}` : `item-${index}`;
 
-    // 避免重复抓取
     if (!results.some(r => r.id === id)) {
       results.push({
         id,
@@ -110,8 +107,8 @@ const renderDashboard = () => {
       <div class="empty-state">
         <div class="empty-icon">📂</div>
         <h3>No Real Conversations Found</h3>
-        <p>We couldn't detect your chat list. Please make sure the sidebar is open and you are logged in.</p>
-        <button id="retry-scan-btn" class="btn-primary">Try Deep Scan</button>
+        <p>We couldn't detect your chat list. Please ensure your sidebar is expanded and conversations are visible.</p>
+        <button id="retry-scan-btn" class="btn-primary">Retry Scan</button>
       </div>
     `;
     document.getElementById('retry-scan-btn')?.addEventListener('click', () => {
@@ -152,20 +149,20 @@ const updateDashboardUI = () => {
   });
 
   const countLabel = document.getElementById('selected-count-label');
-  if (countLabel) countLabel.innerText = `${selectedIds.size} Chats Selected`;
+  if (countLabel) countLabel.innerText = `${selectedIds.size} Selected`;
   
   const deleteBtn = document.getElementById('dash-delete-btn');
   if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0;
 };
 
 /**
- * 自动化批量删除逻辑
+ * 批量删除
  */
 const runBatchDelete = async () => {
   const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
   if (toDelete.length === 0) return;
 
-  if (!confirm(`Confirm deletion of ${toDelete.length} conversations?\nThis will interact with the sidebar buttons automatically.`)) return;
+  if (!confirm(`Delete ${toDelete.length} chats?`)) return;
 
   const platform = getPlatform();
   const deleteBtn = document.getElementById('dash-delete-btn');
@@ -179,38 +176,32 @@ const runBatchDelete = async () => {
       const el = item.originalElement;
       const config = PLATFORM_CONFIG[platform];
       
-      // 1. 触发菜单按钮
+      // 1. 查找并点击菜单按钮 (...)
       let menuBtn = el.querySelector(config.menuBtnSelector);
-      
-      // 如果没找到，尝试在 el 中找任何有 "..." 或 "More" 的按钮
-      if (!menuBtn) {
-        menuBtn = Array.from(el.querySelectorAll('button')).find(b => b.innerText.includes('...') || b.getAttribute('aria-haspopup'));
-      }
+      if (!menuBtn) menuBtn = el.querySelector('button');
 
       if (menuBtn) {
         menuBtn.click();
-        await new Promise(r => setTimeout(r, 700)); // 稍长一点等待 React 渲染菜单
+        await new Promise(r => setTimeout(r, 600));
         
-        // 2. 寻找删除选项（通常在 body 底部或 portal 中）
-        const allPossibleMenuItems = Array.from(document.querySelectorAll('[role="menuitem"], button, div'));
-        const deleteOption = allPossibleMenuItems.find(m => 
-          m.innerText.toLowerCase().includes('delete') && 
-          m.offsetParent !== null
+        // 2. 寻找删除选项
+        const menuItems = Array.from(document.querySelectorAll('[role="menuitem"], button'));
+        const deleteOption = menuItems.find(m => 
+          m.innerText.toLowerCase().includes('delete') && m.offsetParent !== null
         );
 
         if (deleteOption) {
           deleteOption.click();
-          await new Promise(r => setTimeout(r, 700));
+          await new Promise(r => setTimeout(r, 600));
           
-          // 3. 寻找确认按钮
+          // 3. 确认删除
           const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => 
             (b.innerText.toLowerCase().includes('delete') || b.innerText.toLowerCase().includes('confirm')) &&
-            (b.classList.contains('bg-red-600') || b.classList.contains('btn-danger') || b.style.backgroundColor.includes('red'))
+            b.offsetParent !== null
           );
           
           if (confirmBtn) {
             confirmBtn.click();
-            // 成功后在 UI 中移除
             selectedIds.delete(item.id);
             scannedItems = scannedItems.filter(i => i.id !== item.id);
             renderDashboard();
@@ -218,9 +209,9 @@ const runBatchDelete = async () => {
           }
         }
       }
-      await new Promise(r => setTimeout(r, 800)); // 间隔
+      await new Promise(r => setTimeout(r, 800));
     } catch (e) {
-      console.error('Batch delete error for:', item.title, e);
+      console.error('Error deleting:', item.title, e);
     }
   }
 
@@ -229,7 +220,7 @@ const runBatchDelete = async () => {
 };
 
 /**
- * 初始化
+ * 初始化 DOM
  */
 const initOverlay = () => {
   if (document.getElementById('history-manager-overlay')) return;
@@ -240,8 +231,8 @@ const initOverlay = () => {
     <div class="dashboard-window">
       <div class="dashboard-header">
         <div class="header-info">
-          <h2>Batch History Manager</h2>
-          <p>Scanned conversations from your sidebar. Drag to select.</p>
+          <h2>Bulk Manage History</h2>
+          <p>Click or drag to select chats from your sidebar.</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
@@ -249,7 +240,7 @@ const initOverlay = () => {
       <div class="dashboard-footer">
         <span id="selected-count-label">0 Selected</span>
         <div class="footer-actions">
-          <button id="dash-refresh-btn">Refresh List</button>
+          <button id="dash-refresh-btn">Scan Sidebar</button>
           <button id="dash-delete-btn" class="danger" disabled>Delete Selected</button>
         </div>
       </div>
@@ -264,7 +255,6 @@ const initOverlay = () => {
   };
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 
-  // 框选逻辑
   const grid = document.getElementById('dashboard-items-grid');
   grid.onmousedown = (e) => {
     if (e.target.closest('.chat-card')) return;
@@ -311,7 +301,7 @@ const injectLauncher = () => {
   if (nav) {
     const btn = document.createElement('button');
     btn.id = 'history-manager-launcher';
-    btn.innerHTML = `<span>⚡ Manage History</span>`;
+    btn.innerHTML = `⚡ Manage Chats`;
     btn.onclick = toggleDashboard;
     nav.prepend(btn);
   }

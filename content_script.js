@@ -15,10 +15,12 @@ const PLATFORM_CONFIG = {
     container: 'nav, [role="navigation"]',
     itemSelector: 'a[data-sidebar-item="true"][href*="/c/"]',
     titleSelector: '.truncate span, .truncate',
-    menuBtnSelector: '.trailing-pair, button[aria-haspopup="menu"], [id^="radix-"]',
-    // 菜单中的删除选项文字（支持中英文）
+    // 根据 Recorder：菜单按钮带有 data-testid 且以 -options 结尾
+    menuBtnSelector: '[data-testid$="-options"], .trailing-pair, button[aria-haspopup="menu"]',
+    // 根据 Recorder：删除选项有唯一的 data-testid
+    deleteOptionSelector: '[data-testid="delete-chat-menu-item"]',
     deleteOptionTexts: ['delete', '删除'],
-    // 确认弹窗中的红色删除按钮选择器（来自用户截图：data-testid="delete-conversation-confirm-button"）
+    // 根据 Recorder：确认按钮有唯一的 data-testid
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
     confirmBtnTexts: ['delete', '删除', 'confirm', '确认']
   },
@@ -27,6 +29,7 @@ const PLATFORM_CONFIG = {
     itemSelector: 'div[role="listitem"]:has(a[href*="/app/"])',
     titleSelector: 'a, .conversation-title',
     menuBtnSelector: 'button[aria-haspopup="true"]',
+    deleteOptionSelector: '[role="menuitem"]',
     deleteOptionTexts: ['delete', '删除'],
     confirmBtnSelector: 'button',
     confirmBtnTexts: ['delete', '删除', 'confirm', '确认']
@@ -45,7 +48,7 @@ const waitForElement = (selector, predicate, timeout = 5000) => {
       if (found) {
         resolve(found);
       } else if (Date.now() - startTime > timeout) {
-        reject(new Error(`Timeout waiting for ${selector}`));
+        reject(new Error(`Timeout waiting for selector: ${selector}`));
       } else {
         setTimeout(check, 100);
       }
@@ -170,7 +173,7 @@ const runBatchDelete = async () => {
   const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
   if (toDelete.length === 0) return;
 
-  if (!confirm(`Confirm batch deletion of ${toDelete.length} chats?\nThis will take a moment.`)) return;
+  if (!confirm(`Confirm batch deletion of ${toDelete.length} chats?\nWarning: This simulates real clicks.`)) return;
 
   isProcessing = true;
   const platform = getPlatform();
@@ -188,65 +191,75 @@ const runBatchDelete = async () => {
     try {
       const el = item.originalElement;
       
-      // 1. 确保元素在可见范围内并悬停
+      // 1. 滚动并显示菜单按钮
       el.scrollIntoView({ block: 'center', behavior: 'instant' });
+      // 模拟鼠标进入以激活可能存在的悬停状态
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 400));
+      el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 600));
 
-      // 2. 点击菜单按钮
+      // 2. 点击菜单按钮 (...)
       let menuBtn = el.querySelector(config.menuBtnSelector);
-      if (!menuBtn) menuBtn = el.querySelector('button');
+      if (!menuBtn) {
+        // 容错：如果找不到 testid，尝试寻找带有省略号图标的按钮
+        menuBtn = el.querySelector('button, .trailing-pair');
+      }
 
       if (menuBtn) {
+        console.log(`Clicking menu button for: ${item.title}`);
         menuBtn.click();
+        await new Promise(r => setTimeout(r, 800)); // 等待菜单弹出
         
-        // 3. 等待一级菜单项（"Delete"）
+        // 3. 寻找删除选项
         try {
           const deleteOption = await waitForElement(
-            '[role="menuitem"], button, div',
+            config.deleteOptionSelector + ', [role="menuitem"], button, div',
             (m) => {
+              if (m.matches(config.deleteOptionSelector)) return true;
               const text = m.innerText.toLowerCase();
               return config.deleteOptionTexts.some(t => text.includes(t)) && m.offsetParent !== null;
             }
           );
-          deleteOption.click();
           
-          // 4. 等待二级确认弹窗按钮
-          // 优先使用精准的 data-testid，如果没有则根据文字寻找
+          console.log(`Clicking delete option for: ${item.title}`);
+          deleteOption.click();
+          await new Promise(r => setTimeout(r, 800)); // 等待二次确认对话框
+          
+          // 4. 寻找确认按钮
           const confirmBtn = await waitForElement(
             config.confirmBtnSelector + ', button',
             (b) => {
-              const text = b.innerText.toLowerCase();
-              // 如果是通过属性匹配到的
               if (b.matches(config.confirmBtnSelector)) return true;
-              // 否则通过文字和样式属性匹配
-              const isDanger = b.classList.contains('btn-danger') || b.classList.contains('bg-red-600');
+              const text = b.innerText.toLowerCase();
               return config.confirmBtnTexts.some(t => text.includes(t)) && b.offsetParent !== null;
             }
           );
           
+          console.log(`Clicking confirm button for: ${item.title}`);
           confirmBtn.click();
 
-          // 等待删除网络请求和 UI 动画完成
+          // 等待删除动作真正完成
           await new Promise(r => setTimeout(r, 2000));
           
-          // 更新管理面板 UI
+          // 成功后更新 UI
           selectedIds.delete(item.id);
           scannedItems = scannedItems.filter(it => it.id !== item.id);
           renderDashboard();
           updateDashboardUI();
         } catch (innerError) {
-          console.error(`Step failed for ${item.title}:`, innerError);
-          // 尝试关闭可能遮挡的弹窗
+          console.error(`Step failed for item "${item.title}":`, innerError);
+          // 出现错误时尝试按 Esc 退出可能的菜单遮罩
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
           await new Promise(r => setTimeout(r, 500));
         }
+      } else {
+        console.warn(`Menu button not found for: ${item.title}`);
       }
     } catch (e) {
       console.error('Batch error for item:', item.title, e);
     }
     
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 600));
   }
 
   isProcessing = false;
@@ -265,7 +278,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>Bulk Manage History</h2>
-          <p>Multi-select chats using click or drag. Deletion simulates manual clicks.</p>
+          <p>Drag to select chats. Items must be visible in sidebar for deletion.</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>

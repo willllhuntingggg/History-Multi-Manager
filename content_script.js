@@ -8,23 +8,27 @@ let selectedIds = new Set();
 let isDragging = false;
 let startX = 0, startY = 0;
 let dragBox = null;
+let isProcessing = false;
 
 const PLATFORM_CONFIG = {
   chatgpt: {
-    // 侧边栏容器
     container: 'nav, [role="navigation"]',
-    // 根据截图：a 标签带有 data-sidebar-item="true" 且包含 /c/ 路径
     itemSelector: 'a[data-sidebar-item="true"][href*="/c/"]',
-    // 标题在 .truncate 内部的 span 中
     titleSelector: '.truncate span, .truncate',
-    // 菜单按钮在 .trailing-pair 中，或者直接找三个点的图标/按钮
-    menuBtnSelector: '.trailing-pair, [aria-haspopup="menu"]'
+    // 菜单按钮：截图显示在 .trailing-pair 中。也可能是 aria-haspopup="menu" 的按钮
+    menuBtnSelector: '.trailing-pair, button[aria-haspopup="menu"], [id^="radix-"]',
+    // 删除选项文本检测
+    deleteText: 'delete',
+    // 确认按钮文本检测
+    confirmText: 'delete'
   },
   gemini: {
     container: 'nav',
     itemSelector: 'div[role="listitem"]:has(a[href*="/app/"])',
     titleSelector: 'a, .conversation-title',
-    menuBtnSelector: 'button[aria-haspopup="true"]'
+    menuBtnSelector: 'button[aria-haspopup="true"]',
+    deleteText: 'delete',
+    confirmText: 'delete'
   }
 };
 
@@ -35,49 +39,34 @@ const getPlatform = () => {
   return null;
 };
 
-/**
- * 深度扫描真实对话历史
- */
 const scanHistory = () => {
   const platform = getPlatform();
   if (!platform) return [];
   
   const config = PLATFORM_CONFIG[platform];
-  // 截图显示所有的对话都在 id="history" 的 div 下面的 a 标签里
   const items = Array.from(document.querySelectorAll(config.itemSelector));
   const results = [];
 
   items.forEach((el, index) => {
-    // 提取标题：定位到 .truncate 里的 span
     const titleEl = el.querySelector(config.titleSelector);
     if (!titleEl) return;
 
     let title = titleEl.innerText.trim();
     const url = el.getAttribute('href');
-
-    // 过滤掉明显的非对话项
     if (!title || title.length < 1) return;
 
-    // 生成唯一标识
     const id = url ? `id-${url.split('/').pop()}` : `item-${index}`;
 
     if (!results.some(r => r.id === id)) {
-      results.push({
-        id,
-        title,
-        url,
-        originalElement: el
-      });
+      results.push({ id, title, url, originalElement: el });
     }
   });
   
   return results;
 };
 
-/**
- * 切换仪表盘显示
- */
 const toggleDashboard = () => {
+  if (isProcessing) return; // 正在处理时不允许关闭或重复打开
   const overlay = document.getElementById('history-manager-overlay');
   if (!overlay) return;
 
@@ -95,9 +84,6 @@ const toggleDashboard = () => {
   }
 };
 
-/**
- * 渲染仪表盘内容
- */
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
@@ -107,7 +93,7 @@ const renderDashboard = () => {
       <div class="empty-state">
         <div class="empty-icon">📂</div>
         <h3>No Real Conversations Found</h3>
-        <p>We couldn't detect your chat list. Please ensure your sidebar is expanded and conversations are visible.</p>
+        <p>Ensure sidebar is expanded. If items are visible but not shown here, please scroll the sidebar to load them.</p>
         <button id="retry-scan-btn" class="btn-primary">Retry Scan</button>
       </div>
     `;
@@ -126,9 +112,9 @@ const renderDashboard = () => {
     </div>
   `).join('');
 
-  // 绑定点击事件
   container.querySelectorAll('.chat-card').forEach(card => {
     card.onclick = (e) => {
+      if (isProcessing) return;
       const id = card.getAttribute('data-id');
       if (selectedIds.has(id)) selectedIds.delete(id);
       else selectedIds.add(id);
@@ -152,76 +138,99 @@ const updateDashboardUI = () => {
   if (countLabel) countLabel.innerText = `${selectedIds.size} Selected`;
   
   const deleteBtn = document.getElementById('dash-delete-btn');
-  if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0;
+  if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0 || isProcessing;
 };
 
 /**
- * 批量删除
+ * 核心删除动作逻辑
  */
 const runBatchDelete = async () => {
   const toDelete = scannedItems.filter(item => selectedIds.has(item.id));
   if (toDelete.length === 0) return;
 
-  if (!confirm(`Delete ${toDelete.length} chats?`)) return;
+  if (!confirm(`Confirm deletion of ${toDelete.length} chats? \n\nWarning: This will simulate real clicks. Please do not interact with the page during the process.`)) return;
 
+  isProcessing = true;
   const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
   const deleteBtn = document.getElementById('dash-delete-btn');
   const originalText = deleteBtn.innerText;
   
-  deleteBtn.innerText = 'Processing...';
+  deleteBtn.innerText = 'Deleting...';
   deleteBtn.disabled = true;
 
-  for (const item of toDelete) {
+  for (let i = 0; i < toDelete.length; i++) {
+    const item = toDelete[i];
+    deleteBtn.innerText = `Deleting (${i+1}/${toDelete.length})...`;
+    
     try {
       const el = item.originalElement;
-      const config = PLATFORM_CONFIG[platform];
       
-      // 1. 查找并点击菜单按钮 (...)
+      // 1. 滚动到该元素并点击菜单 (...)
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      await new Promise(r => setTimeout(r, 400));
+
       let menuBtn = el.querySelector(config.menuBtnSelector);
       if (!menuBtn) menuBtn = el.querySelector('button');
-
+      
       if (menuBtn) {
         menuBtn.click();
-        await new Promise(r => setTimeout(r, 600));
+        // 给 React 渲染菜单的时间
+        await new Promise(r => setTimeout(r, 800));
         
-        // 2. 寻找删除选项
-        const menuItems = Array.from(document.querySelectorAll('[role="menuitem"], button'));
-        const deleteOption = menuItems.find(m => 
-          m.innerText.toLowerCase().includes('delete') && m.offsetParent !== null
-        );
+        // 2. 寻找全局弹出的删除选项
+        // 注意：菜单通常渲染在 body 末尾，而不是在 item 内部
+        const allButtons = Array.from(document.querySelectorAll('[role="menuitem"], button, div'));
+        const deleteOption = allButtons.find(m => {
+          const text = m.innerText.toLowerCase();
+          return text.includes(config.deleteText) && m.offsetParent !== null;
+        });
 
         if (deleteOption) {
           deleteOption.click();
-          await new Promise(r => setTimeout(r, 600));
+          // 等待确认对话框出现
+          await new Promise(r => setTimeout(r, 800));
           
-          // 3. 确认删除
-          const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => 
-            (b.innerText.toLowerCase().includes('delete') || b.innerText.toLowerCase().includes('confirm')) &&
-            b.offsetParent !== null
-          );
+          // 3. 确认删除按钮
+          const confirmButtons = Array.from(document.querySelectorAll('button'));
+          const confirmBtn = confirmButtons.find(b => {
+            const text = b.innerText.toLowerCase();
+            const isRed = b.classList.contains('bg-red-600') || b.classList.contains('bg-red-500') || b.classList.contains('btn-danger');
+            return (text.includes(config.confirmText) || text.includes('confirm')) && b.offsetParent !== null;
+          });
           
           if (confirmBtn) {
             confirmBtn.click();
+            // 稍等让后端处理完成
+            await new Promise(r => setTimeout(r, 1200));
+            
+            // UI 同步
             selectedIds.delete(item.id);
-            scannedItems = scannedItems.filter(i => i.id !== item.id);
+            scannedItems = scannedItems.filter(it => it.id !== item.id);
             renderDashboard();
             updateDashboardUI();
+          } else {
+            console.warn('Could not find confirmation button for:', item.title);
           }
+        } else {
+          console.warn('Could not find delete option in menu for:', item.title);
+          // 尝试关闭可能卡住的菜单（点击空白处）
+          document.body.click();
         }
+      } else {
+        console.warn('Could not find menu button for:', item.title);
       }
-      await new Promise(r => setTimeout(r, 800));
     } catch (e) {
-      console.error('Error deleting:', item.title, e);
+      console.error('Batch error for item:', item.title, e);
     }
   }
 
+  isProcessing = false;
   deleteBtn.innerText = originalText;
   deleteBtn.disabled = selectedIds.size === 0;
+  alert('Batch process completed.');
 };
 
-/**
- * 初始化 DOM
- */
 const initOverlay = () => {
   if (document.getElementById('history-manager-overlay')) return;
 
@@ -232,7 +241,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>Bulk Manage History</h2>
-          <p>Click or drag to select chats from your sidebar.</p>
+          <p>Click items to select, or drag to multi-select.</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
@@ -240,7 +249,7 @@ const initOverlay = () => {
       <div class="dashboard-footer">
         <span id="selected-count-label">0 Selected</span>
         <div class="footer-actions">
-          <button id="dash-refresh-btn">Scan Sidebar</button>
+          <button id="dash-refresh-btn">Refresh List</button>
           <button id="dash-delete-btn" class="danger" disabled>Delete Selected</button>
         </div>
       </div>
@@ -249,6 +258,7 @@ const initOverlay = () => {
   document.body.appendChild(overlay);
   document.getElementById('close-dash-btn').onclick = toggleDashboard;
   document.getElementById('dash-refresh-btn').onclick = () => {
+    if (isProcessing) return;
     scannedItems = scanHistory();
     renderDashboard();
     updateDashboardUI();
@@ -257,6 +267,7 @@ const initOverlay = () => {
 
   const grid = document.getElementById('dashboard-items-grid');
   grid.onmousedown = (e) => {
+    if (isProcessing) return;
     if (e.target.closest('.chat-card')) return;
     isDragging = true;
     startX = e.clientX;

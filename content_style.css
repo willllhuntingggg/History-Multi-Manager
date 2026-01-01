@@ -1,17 +1,28 @@
 
+/* 选中状态的容器：侧边栏激活管理模式时的悬停效果 */
+nav.manager-active li:hover, 
+nav.manager-active div[role="listitem"]:hover {
+  background-color: rgba(79, 70, 229, 0.05) !important;
+  cursor: crosshair;
+}
+
+/* 选中的具体条目样式 */
 .history-item-selecting {
   outline: 2px solid #4f46e5 !important;
+  outline-offset: -2px;
   background-color: rgba(79, 70, 229, 0.15) !important;
   border-radius: 8px;
   position: relative;
-  z-index: 1;
+  transition: all 0.2s ease;
 }
 
+/* 选中后的 Checkmark 图标 */
 .history-item-selecting::after {
   content: '✓';
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
   background: #4f46e5;
   color: white;
   width: 20px;
@@ -22,22 +33,34 @@
   justify-content: center;
   font-size: 12px;
   font-weight: bold;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.4);
+  z-index: 10;
 }
 
+/* 拖拽选框样式 */
 #multi-select-drag-box {
   position: fixed;
   border: 1px solid #4f46e5;
   background-color: rgba(79, 70, 229, 0.2);
   pointer-events: none;
   z-index: 2147483647;
+  border-radius: 2px;
 }
 
-@keyframes slideUp {
-  from { transform: translate(-50%, 100%); opacity: 0; }
+/* 底部工具栏动画 */
+@keyframes toolbarSlideUp {
+  from { transform: translate(-50%, 120%); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
 }
 
 .batch-toolbar-container {
-  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: toolbarSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* 禁用原生点击效果 */
+nav.manager-active a {
+  pointer-events: none;
+}
+nav.manager-active * {
+  user-select: none;
 }

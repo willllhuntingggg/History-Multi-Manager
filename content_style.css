@@ -1,8 +1,8 @@
 
-/* 启动按钮样式 - 改为底部悬浮 */
+/* 启动按钮样式 - 改为底部悬浮且不遮挡个人信息 */
 #history-manager-launcher {
   position: sticky;
-  bottom: 15px;
+  bottom: 80px; /* 增加底部偏移，避开底部个人资料区域 */
   width: calc(100% - 20px);
   margin: 10px;
   padding: 10px;
@@ -150,7 +150,7 @@
   background: #4f46e5; border-color: #4f46e5;
 }
 
-/* 统一勾选样式，解决前后两个对号的问题 */
+/* 统一勾选样式，解决前后两个對號的问题 */
 .selected .card-checkbox::after {
   content: '✓'; 
   color: white; 

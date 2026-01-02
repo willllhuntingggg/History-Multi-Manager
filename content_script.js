@@ -151,7 +151,7 @@ const deleteOne = async (item, config) => {
 
 const runBatchDelete = async () => {
   const ids = Array.from(selectedIds);
-  if (!confirm(`确定要执行批量删除吗？共 ${ids.length} 项。`)) return;
+  if (!confirm(`确定要执行删除吗？共 ${ids.length} 项。`)) return;
 
   isProcessing = true;
   const platform = getPlatform();
@@ -176,7 +176,7 @@ const runBatchDelete = async () => {
 
   isProcessing = false;
   overlay.classList.remove('processing');
-  alert('批量操作结束');
+  alert('操作结束');
 };
 
 const renderDashboard = () => {

@@ -6,7 +6,7 @@
   width: calc(100% - 20px);
   margin: 10px;
   padding: 10px;
-  background: #4f46e5;
+  background: #37365B;
   color: white;
   border: none;
   border-radius: 8px;
@@ -18,15 +18,15 @@
   justify-content: center;
   gap: 8px;
   transition: all 0.2s;
-  box-shadow: 0 8px 15px -3px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 8px 15px -3px rgba(55, 54, 91, 0.3);
   z-index: 100;
   flex-shrink: 0;
 }
 
 #history-manager-launcher:hover {
-  background: #4338ca;
+  background: #2a2946;
   transform: translateY(-2px);
-  box-shadow: 0 10px 20px -5px rgba(79, 70, 229, 0.4);
+  box-shadow: 0 10px 20px -5px rgba(55, 54, 91, 0.4);
 }
 
 /* 遮罩层 */

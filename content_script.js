@@ -243,27 +243,29 @@ const initOverlay = () => {
   
   const overlay = document.createElement('div');
   overlay.id = 'history-manager-overlay';
-  overlay.style.cssText = "display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:2147483647; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; backdrop-filter:blur(5px);";
   
   overlay.innerHTML = `
-    <div class="dashboard-window" style="width:90%; max-width:850px; height:80vh; background:#fff; border-radius:16px; display:flex; flex-direction:column; color:#333; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-      <div class="dashboard-header" style="padding:20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <h2 style="margin:0; font-size:18px;">批量管理助手</h2>
-          <p style="margin:5px 0 0; font-size:12px; color:#666;">精准控制您的历史记录</p>
+    <div class="dashboard-window">
+      <div class="dashboard-header">
+        <div class="header-info">
+          <h2>批量管理对话</h2>
+          <p>选择您想要批量删除或整理的历史记录</p>
         </div>
-        <button id="close-dash-btn" style="background:none; border:none; font-size:24px; cursor:pointer;">✕</button>
+        <button id="close-dash-btn">✕</button>
       </div>
-      <div id="dashboard-items-grid" class="dashboard-body" style="flex:1; padding:20px; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:10px; align-content:start;"></div>
-      <div class="dashboard-footer" style="padding:15px 20px; background:#f9f9f9; border-top:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
+      <div id="dashboard-items-grid" class="dashboard-body"></div>
+      <div class="dashboard-footer">
         <span id="selected-count-label">0 项已选</span>
-        <div class="footer-actions" style="display:flex; gap:10px;">
-          <button id="dash-refresh-btn" style="padding:8px 15px; border-radius:6px; border:1px solid #ccc; background:#fff; cursor:pointer;">刷新扫描</button>
-          <button id="dash-delete-btn" class="danger" disabled style="padding:8px 20px; border-radius:6px; border:none; background:#ef4444; color:#fff; cursor:pointer; font-weight:bold;">执行批量删除</button>
+        <div class="footer-actions">
+          <button id="dash-refresh-btn" class="btn-secondary">刷新列表</button>
+          <button id="dash-delete-btn" class="btn-primary danger" disabled>执行删除</button>
         </div>
       </div>
-      <div id="processing-mask" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.6); z-index:100; align-items:center; justify-content:center; cursor:wait;">
-         <div style="padding:20px; background:#fff; border-radius:8px; box-shadow:0 5px 15px rgba(0,0,0,0.2); font-weight:bold;">正在自动化操作，请勿关闭...</div>
+      <div id="processing-mask">
+         <div class="processing-card">
+            <div class="spinner"></div>
+            <span>正在执行自动化操作，请勿关闭窗口...</span>
+         </div>
       </div>
     </div>
   `;
@@ -291,7 +293,6 @@ const injectLauncher = () => {
     e.stopPropagation();
     toggleDashboard();
   };
-  // 关键修改：改为 appendChild 放到列表底部
   sidebar.appendChild(btn);
 };
 
@@ -304,58 +305,9 @@ setTimeout(() => {
   initOverlay();
 }, 2000);
 
-// 全局样式
+// 保持基础功能逻辑样式，复杂UI通过 content_style.css 控制
 const style = document.createElement('style');
 style.textContent = `
   .processing #processing-mask { display: flex !important; }
-  .chat-card { 
-    border: 1px solid #ddd; 
-    padding: 8px 12px; 
-    border-radius: 8px; 
-    cursor: pointer; 
-    font-size: 13px; 
-    transition: all 0.2s; 
-    position: relative; 
-    min-height: 40px; 
-    display: flex; 
-    align-items: center; 
-    background: #fff; 
-    box-sizing: border-box;
-    overflow: hidden;
-  }
-  .chat-card:hover { border-color: #4f46e5; background: #f5f3ff; }
-  .chat-card.selected { border-color: #4f46e5; background: #eef2ff; }
-  .card-title {
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding-right: 24px;
-    pointer-events: none;
-  }
-  .card-checkbox {
-    position: absolute; 
-    right: 12px; 
-    width: 16px; 
-    height: 16px; 
-    border-radius: 4px; 
-    border: 2px solid #ddd; 
-    display: flex; 
-    align-items: center; 
-    justify-content: center;
-    pointer-events: none;
-    background: #fff;
-  }
-  .selected .card-checkbox {
-    background: #4f46e5;
-    border-color: #4f46e5;
-  }
-  .selected .card-checkbox::after {
-    content: '✓';
-    color: #fff;
-    font-size: 12px;
-    font-weight: bold;
-  }
-  #dash-delete-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 `;
 document.head.appendChild(style);

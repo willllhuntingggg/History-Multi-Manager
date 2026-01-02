@@ -10,7 +10,6 @@ let isProcessing = false;
 const PLATFORM_CONFIG = {
   chatgpt: {
     linkSelector: 'a[data-sidebar-item="true"]',
-    urlPattern: /^\/c\/[a-z0-9-]{10,}$/i, // 匹配 /c/ 后面跟着长 UUID 的链接
     menuBtnSelector: 'button[data-testid*="-options"]',
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
@@ -18,7 +17,6 @@ const PLATFORM_CONFIG = {
   },
   gemini: {
     linkSelector: 'a[href*="/app/"]',
-    urlPattern: /^\/app\/[a-z0-9]{10,}$/i, // 匹配 Gemini 的对话 ID 格式
     menuBtnSelector: 'button[aria-haspopup="true"]',
     deleteBtnSelector: '[role="menuitem"], .delete-button',
     confirmBtnSelector: 'button.delete-confirm, .confirm-button',
@@ -64,7 +62,7 @@ const waitForElement = (selector, timeout = 3000) => {
 };
 
 /**
- * 等待元素消失
+ * 等待元素消失 (关键：防止循环弹出确认框)
  */
 const waitForDisappear = (selector, timeout = 4000) => {
   return new Promise((resolve) => {
@@ -87,46 +85,32 @@ const getPlatform = () => {
 };
 
 /**
- * 扫描历史 - 增加了严格过滤
+ * 扫描历史
  */
 const scanHistory = () => {
   const platform = getPlatform();
   if (!platform) return [];
   const config = PLATFORM_CONFIG[platform];
   
-  // 获取侧边栏导航容器，缩小搜索范围
-  const nav = document.querySelector('nav') || document.querySelector('[role="navigation"]') || document.body;
-  const links = Array.from(nav.querySelectorAll(config.linkSelector));
-  
+  const links = Array.from(document.querySelectorAll(config.linkSelector));
   const results = [];
   const seenIds = new Set();
 
   links.forEach((link) => {
     const href = link.getAttribute('href');
-    if (!href) return;
-
-    // 关键修复：使用正则校验 URL 路径
-    // 排除 /c/new, /g/ (GPTs), /auth, /settings 等干扰
-    const path = href.split('?')[0]; 
-    if (!config.urlPattern.test(path)) return;
+    if (!href || href.includes('/new') || href === '/') return;
     
-    // 提取纯净 ID
-    const rawId = path.split('/').pop();
+    // 提取ID
+    const rawId = href.split('/').pop();
     if (seenIds.has(rawId)) return;
     seenIds.add(rawId);
 
-    // 提取标题：优先取 span 或 .truncate
-    const titleEl = link.querySelector('.truncate, span[dir="auto"], div.truncate');
-    let title = titleEl ? titleEl.innerText : (link.innerText || "Untitled Chat");
-    
-    // 再次清洗标题（去除多余换行）
-    title = title.split('\n')[0].trim();
-    if (!title || title === "New chat") return;
+    const titleEl = link.querySelector('.truncate, span[dir="auto"]');
+    const title = titleEl ? titleEl.innerText : "Untitled Chat";
 
     results.push({ id: `id-${rawId}`, title, url: href });
   });
-
-  console.log(`[BatchManager] 过滤后扫描到 ${results.length} 个真实对话`);
+  console.log(`[BatchManager] 扫描到 ${results.length} 个对话`);
   return results;
 };
 
@@ -134,29 +118,51 @@ const scanHistory = () => {
  * 自动化单次删除
  */
 const deleteOne = async (item, config) => {
-  console.log(`[BatchManager] 正在处理: ${item.title}`);
+  console.log(`[BatchManager] 开始删除: ${item.title}`);
   
-  const link = document.querySelector(`a[href="${item.url}"]`);
-  if (!link) return false;
+  // 1. 寻找列表项
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) {
+    console.warn(`[BatchManager] 未找到链接: ${item.url}`);
+    return false;
+  }
 
+  // 2. 找到菜单按钮并点击
   const menuBtn = link.querySelector(config.menuBtnSelector);
-  if (!menuBtn) return false;
+  if (!menuBtn) {
+    console.warn(`[BatchManager] 未找到菜单按钮`);
+    return false;
+  }
   
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 300));
   hardClick(menuBtn);
 
+  // 3. 等待并点击删除菜单项
   const deleteBtn = await waitForElement(config.deleteBtnSelector);
-  if (!deleteBtn) return false;
+  if (!deleteBtn) {
+    console.warn(`[BatchManager] 未找到删除选项`);
+    return false;
+  }
   hardClick(deleteBtn);
 
+  // 4. 等待并点击确认按钮
   const confirmBtn = await waitForElement(config.confirmBtnSelector);
-  if (!confirmBtn) return false;
+  if (!confirmBtn) {
+    console.warn(`[BatchManager] 未找到确认按钮`);
+    return false;
+  }
   
   hardClick(confirmBtn);
+
+  // 5. 核心：等待确认弹窗彻底从 DOM 消失
+  console.log(`[BatchManager] 等待弹窗消失...`);
   const isGone = await waitForDisappear(config.confirmBtnSelector);
   
-  if (!isGone) return false;
+  if (!isGone) {
+    console.error(`[BatchManager] 确认弹窗超时未关闭，停止后续操作以免陷入死循环`);
+    return false;
+  }
 
   await new Promise(r => setTimeout(r, 1000));
   return true;
@@ -181,6 +187,7 @@ const runBatchDelete = async () => {
         scannedItems = scannedItems.filter(it => it.id !== id);
         renderDashboard();
       } else {
+        // 如果失败，可以尝试发送 ESC 键关闭可能卡住的菜单
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         await new Promise(r => setTimeout(r, 500));
       }
@@ -197,16 +204,11 @@ const renderDashboard = () => {
   if (!container) return;
   
   if (scannedItems.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div style="font-size:40px; margin-bottom:10px;">📭</div>
-        <h3>未发现聊天记录</h3>
-        <p>请确保侧边栏已展开，或尝试刷新页面。</p>
-      </div>`;
+    container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3><p>请确保侧边栏已展开</p></div>`;
   } else {
     container.innerHTML = scannedItems.map(item => `
       <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
-        <div class="card-title" title="${item.title}">${item.title}</div>
+        <div class="card-title">${item.title}</div>
         <div class="card-checkbox"></div>
       </div>
     `).join('');
@@ -257,28 +259,24 @@ const initOverlay = () => {
   overlay.style.cssText = "display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:99999999; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; backdrop-filter:blur(5px);";
   
   overlay.innerHTML = `
-    <div class="dashboard-window" style="width:90%; max-width:850px; height:80vh; background:#fff; border-radius:16px; display:flex; flex-direction:column; color:#333; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.5); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <div class="dashboard-window" style="width:90%; max-width:850px; height:80vh; background:#fff; border-radius:16px; display:flex; flex-direction:column; color:#333; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
       <div class="dashboard-header" style="padding:20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
         <div>
           <h2 style="margin:0; font-size:18px;">批量管理助手</h2>
-          <p style="margin:5px 0 0; font-size:12px; color:#666;">仅显示您的对话历史记录</p>
+          <p style="margin:5px 0 0; font-size:12px; color:#666;">精准控制您的历史记录</p>
         </div>
-        <button id="close-dash-btn" style="background:none; border:none; font-size:24px; cursor:pointer; color:#999;">✕</button>
+        <button id="close-dash-btn" style="background:none; border:none; font-size:24px; cursor:pointer;">✕</button>
       </div>
       <div id="dashboard-items-grid" class="dashboard-body" style="flex:1; padding:20px; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:12px; align-content:start;"></div>
       <div class="dashboard-footer" style="padding:15px 20px; background:#f9f9f9; border-top:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
         <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions" style="display:flex; gap:10px;">
-          <button id="dash-refresh-btn" style="padding:8px 15px; border-radius:6px; border:1px solid #ccc; background:#fff; cursor:pointer;">刷新列表</button>
+          <button id="dash-refresh-btn" style="padding:8px 15px; border-radius:6px; border:1px solid #ccc; background:#fff; cursor:pointer;">刷新扫描</button>
           <button id="dash-delete-btn" class="danger" disabled style="padding:8px 20px; border-radius:6px; border:none; background:#ef4444; color:#fff; cursor:pointer; font-weight:bold;">执行批量删除</button>
         </div>
       </div>
-      <div id="processing-mask" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.7); z-index:100; align-items:center; justify-content:center; cursor:wait;">
-         <div style="padding:30px; background:#fff; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.1); text-align:center;">
-            <div class="spinner" style="width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #ef4444; border-radius:50%; animation: spin 1s linear infinite; margin: 0 auto 15px;"></div>
-            <div style="font-weight:bold; color:#ef4444;">正在批量删除中...</div>
-            <div style="font-size:12px; color:#666; margin-top:5px;">请勿关闭或操作页面</div>
-         </div>
+      <div id="processing-mask" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(255,255,255,0.6); z-index:100; align-items:center; justify-content:center; cursor:wait;">
+         <div style="padding:20px; background:#fff; border-radius:8px; box-shadow:0 5px 15px rgba(0,0,0,0.2); font-weight:bold;">正在自动化操作，请勿关闭...</div>
       </div>
     </div>
   `;
@@ -317,16 +315,11 @@ setTimeout(() => {
 // 全局样式
 const style = document.createElement('style');
 style.textContent = `
-  @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   .processing #processing-mask { display: flex !important; }
-  .chat-card { border:1px solid #e2e8f0; padding:15px; border-radius:10px; cursor:pointer; font-size:12px; transition:all 0.2s; position:relative; min-height:80px; display:flex; align-items:flex-start; background:#fff; overflow:hidden; }
-  .chat-card:hover { border-color:#4f46e5; background:#f8fafc; transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
-  .chat-card.selected { border-color:#4f46e5; background:#eff6ff; box-shadow:0 0 0 2px rgba(79,70,229,0.2); }
-  .card-title { font-weight: 500; color: #1e293b; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .card-checkbox { position:absolute; bottom:10px; right:10px; width:18px; height:18px; border:2px solid #cbd5e1; border-radius:4px; background:#fff; display:flex; align-items:center; justify-content:center; }
-  .selected .card-checkbox { background:#4f46e5; border-color:#4f46e5; }
-  .selected .card-checkbox::after { content:'✓'; color:#fff; font-size:12px; font-weight:bold; }
+  .chat-card { border:1px solid #ddd; padding:12px; border-radius:8px; cursor:pointer; font-size:12px; transition:all 0.2s; position:relative; min-height:60px; display:flex; align-items:center; background:#fff; }
+  .chat-card:hover { border-color:#4f46e5; background:#f5f3ff; }
+  .chat-card.selected { border-color:#4f46e5; background:#eef2ff; box-shadow:0 0 0 2px rgba(79,70,229,0.2); }
+  .chat-card.selected::after { content:'✓'; position:absolute; top:5px; right:8px; color:#4f46e5; font-weight:bold; font-size:14px; }
   #dash-delete-btn:disabled { opacity:0.4; cursor:not-allowed; }
-  .empty-state { grid-column: 1 / -1; padding: 100px 0; text-align: center; color: #94a3b8; }
 `;
 document.head.appendChild(style);

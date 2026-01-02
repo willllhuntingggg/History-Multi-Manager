@@ -10,7 +10,7 @@
   width: fit-content;
   padding: 6px 14px;
   background: #37365B;
-  color: #fff;
+  color: #DCDBF6;
   border: none;
   border-radius: 20px;
   font-size: 12px;
@@ -222,7 +222,7 @@
 }
 
 .spinner {
-  width: 24px; height: 24px; border: 3px solid rgba(0,0,0,0.1); border-top-color: #10a37f; border-radius: 50%; animation: spin 0.8s linear infinite;
+  width: 24px; height: 24px; border: 3px solid rgba(0,0,0,0.1); border-top-color: #37365B; border-radius: 50%; animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 

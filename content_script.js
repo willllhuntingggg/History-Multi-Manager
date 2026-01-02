@@ -96,7 +96,7 @@ const scanHistory = () => {
   
   const links = Array.from(document.querySelectorAll(config.linkSelector));
   const results = [];
-  const seenIds = new Set();
+  const seenIds = Set.prototype.constructor === Set ? new Set() : []; // Simple check for older envs
 
   links.forEach((link) => {
     const href = link.getAttribute('href');
@@ -108,8 +108,8 @@ const scanHistory = () => {
     if (href.includes('/new') || href === '/') return;
     
     const rawId = path.split('/').pop();
-    if (seenIds.has(rawId)) return;
-    seenIds.add(rawId);
+    if (seenIds instanceof Set && seenIds.has(rawId)) return;
+    if (seenIds instanceof Set) seenIds.add(rawId);
 
     const titleEl = link.querySelector('.truncate, span[dir="auto"]');
     const title = titleEl ? titleEl.innerText : "Untitled Chat";
@@ -291,7 +291,8 @@ const injectLauncher = () => {
     e.stopPropagation();
     toggleDashboard();
   };
-  sidebar.prepend(btn);
+  // 关键修改：改为 appendChild 放到列表底部
+  sidebar.appendChild(btn);
 };
 
 // 监听与初始启动

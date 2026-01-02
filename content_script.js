@@ -10,6 +10,7 @@ let isProcessing = false;
 const PLATFORM_CONFIG = {
   chatgpt: {
     linkSelector: 'a[data-sidebar-item="true"]',
+    urlPattern: /^\/c\/[a-z0-9-]{10,}$/i, 
     menuBtnSelector: 'button[data-testid*="-options"]',
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
@@ -17,6 +18,7 @@ const PLATFORM_CONFIG = {
   },
   gemini: {
     linkSelector: 'a[href*="/app/"]',
+    urlPattern: /^\/app\/[a-z0-9]{10,}$/i,
     menuBtnSelector: 'button[aria-haspopup="true"]',
     deleteBtnSelector: '[role="menuitem"], .delete-button',
     confirmBtnSelector: 'button.delete-confirm, .confirm-button',
@@ -98,10 +100,16 @@ const scanHistory = () => {
 
   links.forEach((link) => {
     const href = link.getAttribute('href');
-    if (!href || href.includes('/new') || href === '/') return;
+    if (!href) return;
+
+    // 修复：仅匹配符合对话路径规则的链接，排除 /explore, /g/ 等菜单项
+    const path = href.split('?')[0];
+    if (!config.urlPattern.test(path)) return;
+    
+    if (href.includes('/new') || href === '/') return;
     
     // 提取ID
-    const rawId = href.split('/').pop();
+    const rawId = path.split('/').pop();
     if (seenIds.has(rawId)) return;
     seenIds.add(rawId);
 
@@ -110,7 +118,7 @@ const scanHistory = () => {
 
     results.push({ id: `id-${rawId}`, title, url: href });
   });
-  console.log(`[BatchManager] 扫描到 ${results.length} 个对话`);
+  console.log(`[BatchManager] 扫描到 ${results.length} 个真实对话`);
   return results;
 };
 

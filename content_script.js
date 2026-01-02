@@ -248,7 +248,7 @@ const initOverlay = () => {
     <div class="dashboard-window">
       <div class="dashboard-header">
         <div class="header-info">
-          <h2>批量管理对话</h2>
+          <h2>多选管理对话</h2>
           <p>选择您想要批量删除或整理的历史记录</p>
         </div>
         <button id="close-dash-btn">✕</button>
@@ -287,7 +287,7 @@ const injectLauncher = () => {
 
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
-  btn.innerHTML = `<span>⚡</span> 批量管理`;
+  btn.innerHTML = `<span>☑</span> 多选`;
   btn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();

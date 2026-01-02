@@ -134,8 +134,8 @@
 }
 
 .chat-card.selected {
-  border-color: #10a37f;
-  background: rgba(16, 163, 127, 0.05);
+  border-color: #37365B;
+  background: rgba(55, 54, 91, 0.08);
 }
 
 .card-title {
@@ -163,7 +163,7 @@
 }
 
 .selected .card-checkbox {
-  background: #10a37f; border-color: #10a37f;
+  background: #37365B; border-color: #37365B;
 }
 
 .selected .card-checkbox::after {

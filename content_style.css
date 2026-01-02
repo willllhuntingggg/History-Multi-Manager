@@ -1,32 +1,40 @@
 
-/* 启动按钮样式 - 改为底部悬浮且不遮挡个人信息 */
+/* 启动按钮样式 - 优化为紧凑的右对齐胶囊 */
 #history-manager-launcher {
   position: sticky;
-  bottom: 80px; /* 增加底部偏移，避开底部个人资料区域 */
-  width: calc(100% - 20px);
-  margin: 10px;
-  padding: 10px;
+  bottom: 80px;
+  margin-left: auto; /* 靠右对齐 */
+  margin-right: 10px;
+  margin-top: 5px;
+  margin-bottom: 5px;
+  width: fit-content; /* 宽度随内容自适应 */
+  padding: 6px 12px;
   background: #37365B;
   color: white;
   border: none;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: 20px; /* 更加圆润的胶囊形 */
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 5px;
   transition: all 0.2s;
-  box-shadow: 0 8px 15px -3px rgba(55, 54, 91, 0.3);
+  box-shadow: 0 4px 10px -2px rgba(55, 54, 91, 0.4);
   z-index: 100;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 #history-manager-launcher:hover {
   background: #2a2946;
-  transform: translateY(-2px);
-  box-shadow: 0 10px 20px -5px rgba(55, 54, 91, 0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px -3px rgba(55, 54, 91, 0.5);
+}
+
+#history-manager-launcher span {
+  font-size: 14px;
 }
 
 /* 遮罩层 */

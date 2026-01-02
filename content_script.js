@@ -10,46 +10,58 @@ let isProcessing = false;
 const PLATFORM_CONFIG = {
   chatgpt: {
     linkSelector: 'a[href*="/c/"]',
-    menuBtnSelector: 'button[aria-haspopup="menu"], [data-testid$="-options"], button:has(svg.lucide-ellipsis)',
+    // 精准匹配用户发现的 data-testid 结构
+    menuBtnSelector: 'button[data-testid$="-options"], button[aria-haspopup="menu"]',
+    deleteKeywords: ['删除', 'delete', 'remove'],
+    confirmKeywords: ['确认', 'confirm', '删除', 'delete']
   },
   gemini: {
     linkSelector: 'a[href*="/app/"]',
     menuBtnSelector: 'button[aria-haspopup="true"]',
+    deleteKeywords: ['删除', 'delete', 'remove'],
+    confirmKeywords: ['确认', 'confirm', '删除', 'delete']
   }
 };
 
 /**
- * 辅助函数：等待元素出现
+ * 强力模拟点击：模拟真实硬件交互流程
  */
-const waitForElement = (selector, textKeywords = [], timeout = 3000) => {
+const hardClick = (el) => {
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const clientX = rect.left + rect.width / 2;
+  const clientY = rect.top + rect.height / 2;
+  const opts = { bubbles: true, cancelable: true, view: window, clientX, clientY };
+
+  // 按顺序触发所有关键事件
+  el.dispatchEvent(new PointerEvent('pointerdown', { ...opts, pointerType: 'mouse', isPrimary: true }));
+  el.dispatchEvent(new MouseEvent('mousedown', opts));
+  el.focus();
+  el.dispatchEvent(new PointerEvent('pointerup', { ...opts, pointerType: 'mouse', isPrimary: true }));
+  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  el.dispatchEvent(new MouseEvent('click', opts));
+};
+
+/**
+ * 等待元素出现（带超时和文本匹配）
+ */
+const waitForElement = (selector, keywords = [], timeout = 5000) => {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const check = () => {
       const elements = Array.from(document.querySelectorAll(selector));
       const found = elements.find(el => {
-        const txt = (el.innerText || el.textContent || "").toLowerCase();
-        const isVisible = el.offsetParent !== null;
-        return isVisible && (textKeywords.length === 0 || textKeywords.some(k => txt.includes(k.toLowerCase())));
+        const text = (el.innerText || el.textContent || "").toLowerCase();
+        const isVisible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+        return isVisible && (keywords.length === 0 || keywords.some(k => text.includes(k.toLowerCase())));
       });
 
       if (found) resolve(found);
       else if (Date.now() - startTime > timeout) resolve(null);
-      else requestAnimationFrame(check);
+      else setTimeout(check, 100);
     };
     check();
   });
-};
-
-/**
- * 模拟真实点击
- */
-const simulateClick = (el) => {
-  if (!el) return;
-  el.focus();
-  const opts = { bubbles: true, cancelable: true, view: window };
-  el.dispatchEvent(new MouseEvent('mousedown', opts));
-  el.dispatchEvent(new MouseEvent('mouseup', opts));
-  el.dispatchEvent(new MouseEvent('click', opts));
 };
 
 const getPlatform = () => {
@@ -60,7 +72,7 @@ const getPlatform = () => {
 };
 
 /**
- * 扫描历史记录
+ * 扫描历史
  */
 const scanHistory = () => {
   const platform = getPlatform();
@@ -89,66 +101,58 @@ const scanHistory = () => {
     results.push({
       id: `id-${rawId}`,
       title: title || "Untitled Chat",
-      url: href,
-      originalElement: container
+      url: href
     });
   });
-  console.log(`[Manager] 扫描到 ${results.length} 条记录`);
   return results;
 };
 
 /**
- * 核心：删除单个会话的自动化流程
+ * 自动化删除单条记录
  */
-const autoDeleteConversation = async (item, config) => {
-  console.log(`[Manager] 开始处理: ${item.title}`);
+const deleteOne = async (item, config) => {
+  console.log(`[BatchManager] 正在删除: ${item.title}`);
   
-  // 1. 重新定位 DOM 元素（防止页面变化）
   const allLinks = Array.from(document.querySelectorAll(config.linkSelector));
-  const targetLink = allLinks.find(l => l.getAttribute('href') === item.url);
-  if (!targetLink) return false;
+  const link = allLinks.find(l => l.getAttribute('href') === item.url);
+  if (!link) return false;
 
-  const row = targetLink.closest('li') || targetLink.closest('[role="listitem"]') || targetLink.parentElement;
+  const row = link.closest('li') || link.closest('[role="listitem"]') || link.parentElement;
   row.scrollIntoView({ block: 'center' });
-  
-  // 2. 触发 Hover
+  await new Promise(r => setTimeout(r, 400));
+
+  // 1. 模拟 Hover 让按钮出现
   row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 200));
 
-  // 3. 点击“三个点”菜单
-  let menuBtn = row.querySelector(config.menuBtnSelector) || row.querySelector('button');
+  // 2. 点击“三个点”按钮
+  let menuBtn = row.querySelector(config.menuBtnSelector);
+  if (!menuBtn) menuBtn = row.querySelector('button'); // 兜底方案
   if (!menuBtn) return false;
-  simulateClick(menuBtn);
+  
+  hardClick(menuBtn);
 
-  // 4. 等待弹出菜单中的“删除”按钮 (Search in global body)
-  const deleteKeys = ['删除', 'delete', 'remove', 'clear'];
-  const deleteMenuItem = await waitForElement('div[role="menuitem"], li[role="menuitem"], button', deleteKeys);
-  
-  if (!deleteMenuItem) {
-    console.error("未找到删除菜单项");
-    return false;
-  }
-  simulateClick(deleteMenuItem);
+  // 3. 等待菜单项渲染并点击删除
+  const deleteBtn = await waitForElement('[role="menuitem"], button, li', config.deleteKeywords);
+  if (!deleteBtn) return false;
+  hardClick(deleteBtn);
 
-  // 5. 等待确认弹窗中的“确认”按钮
-  const confirmKeys = ['确认', 'confirm', '删除', 'delete'];
-  const confirmBtn = await waitForElement('button.btn-danger, button', confirmKeys);
-  
-  if (!confirmBtn) {
-    console.error("未找到确认按钮");
-    return false;
-  }
-  
-  simulateClick(confirmBtn);
-  
-  // 6. 给后端一点响应时间
-  await new Promise(r => setTimeout(r, 1500));
+  // 4. 等待确认弹窗并点击确认
+  const confirmBtn = await waitForElement('button', config.confirmKeywords);
+  if (!confirmBtn) return false;
+  hardClick(confirmBtn);
+
+  // 5. 等待系统物理删除动作
+  await new Promise(r => setTimeout(r, 2000));
   return true;
 };
 
+/**
+ * 运行批量删除
+ */
 const runBatchDelete = async () => {
-  const idsToDelete = Array.from(selectedIds);
-  if (!confirm(`确定要启动自动批量删除吗？\n将删除 ${idsToDelete.length} 条记录。\n\n运行期间请勿操作网页。`)) return;
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定要自动删除这 ${ids.length} 个对话吗？\n\n期间请不要操作页面。`)) return;
 
   isProcessing = true;
   const platform = getPlatform();
@@ -158,81 +162,71 @@ const runBatchDelete = async () => {
   overlay.style.opacity = "0.3";
   overlay.style.pointerEvents = "none";
 
-  for (let id of idsToDelete) {
+  for (const id of ids) {
     const item = scannedItems.find(it => it.id === id);
-    if (!item) continue;
-
-    const success = await autoDeleteConversation(item, config);
-    if (success) {
-      selectedIds.delete(id);
-      scannedItems = scannedItems.filter(it => it.id !== id);
-      renderDashboard();
-      updateDashboardUI();
+    if (item) {
+      const ok = await deleteOne(item, config);
+      if (ok) {
+        selectedIds.delete(id);
+        scannedItems = scannedItems.filter(it => it.id !== id);
+        renderDashboard();
+        updateFooter();
+      }
     }
-    // 强制按 ESC 清理残留
+    // 每次尝试按 Esc 清理可能残留的 UI 状态
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await new Promise(r => setTimeout(r, 500));
   }
 
+  isProcessing = false;
   overlay.style.opacity = "1";
   overlay.style.pointerEvents = "auto";
-  isProcessing = false;
-  updateDashboardUI();
-  alert('批量操作已完成。');
+  alert('批量删除任务完成！');
 };
 
-/**
- * UI 渲染部分保持不变，仅修复样式关联
- */
-const toggleDashboard = () => {
-  if (isProcessing) return;
-  const overlay = document.getElementById('history-manager-overlay');
-  if (!overlay) return;
-  isDashboardOpen = !isDashboardOpen;
-  if (isDashboardOpen) {
-    scannedItems = scanHistory();
-    selectedIds.clear();
-    renderDashboard();
-    overlay.style.display = 'flex';
-  } else {
-    overlay.style.display = 'none';
-    document.body.style.overflow = '';
-  }
+const updateFooter = () => {
+  const lbl = document.getElementById('selected-count-label');
+  if (lbl) lbl.innerText = `已选 ${selectedIds.size} 项`;
+  const btn = document.getElementById('dash-delete-btn');
+  if (btn) btn.disabled = selectedIds.size === 0 || isProcessing;
 };
 
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
   if (scannedItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>未找到记录</h3><p>请确保侧边栏已展开。</p></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>没有找到记录</h3></div>`;
     return;
   }
   container.innerHTML = scannedItems.map(item => `
     <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
-      <div class="card-title" title="${item.title}">${item.title}</div>
+      <div class="card-title">${item.title}</div>
       <div class="card-checkbox"></div>
     </div>
   `).join('');
   
   container.querySelectorAll('.chat-card').forEach(card => {
-    card.onclick = (e) => {
-      const id = card.getAttribute('data-id');
-      if (selectedIds.has(id)) selectedIds.delete(id);
-      else selectedIds.add(id);
-      updateDashboardUI();
+    card.onclick = () => {
+      const id = card.dataset.id;
+      if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+      card.classList.toggle('selected');
+      updateFooter();
     };
   });
 };
 
-const updateDashboardUI = () => {
-  const countLabel = document.getElementById('selected-count-label');
-  if (countLabel) countLabel.innerText = `已选 ${selectedIds.size} 项`;
-  const deleteBtn = document.getElementById('dash-delete-btn');
-  if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0 || isProcessing;
-  
-  document.querySelectorAll('.chat-card').forEach(card => {
-    card.classList.toggle('selected', selectedIds.has(card.getAttribute('data-id')));
-  });
+const toggleDashboard = () => {
+  if (isProcessing) return;
+  const overlay = document.getElementById('history-manager-overlay');
+  if (!overlay) return;
+  isDashboardOpen = !isDashboardOpen;
+  overlay.style.display = isDashboardOpen ? 'flex' : 'none';
+  if (isDashboardOpen) {
+    scannedItems = scanHistory();
+    selectedIds.clear();
+    renderDashboard();
+    updateFooter();
+  }
 };
 
 const initOverlay = () => {
@@ -244,7 +238,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>批量管理助手</h2>
-          <p>请保持在历史记录可见的状态下运行。</p>
+          <p>基于您的侧边栏数据</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
@@ -271,11 +265,11 @@ const injectLauncher = () => {
 
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
-  btn.innerHTML = `<span>⚡</span> 批量管理历史`;
+  btn.innerHTML = `<span>⚡</span> 批量管理`;
   btn.onclick = toggleDashboard;
   nav.prepend(btn);
 };
 
-const observer = new MutationObserver(() => { injectLauncher(); initOverlay(); });
+const observer = new MutationObserver(injectLauncher);
 observer.observe(document.body, { childList: true, subtree: true });
-setTimeout(() => { injectLauncher(); initOverlay(); }, 1500);
+initOverlay();

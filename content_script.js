@@ -7,8 +7,11 @@ let scannedItems = [];
 let selectedIds = new Set();
 let isProcessing = false;
 
+// 定义支持的平台配置，架构上支持多平台，但逻辑上可控开启
 const PLATFORM_CONFIG = {
   chatgpt: {
+    name: 'ChatGPT',
+    enabled: true,
     linkSelector: 'a[data-sidebar-item="true"]',
     urlPattern: /^\/c\/[a-z0-9-]{10,}$/i, 
     menuBtnSelector: 'button[data-testid*="-options"]',
@@ -17,6 +20,8 @@ const PLATFORM_CONFIG = {
     modalSelector: '[role="dialog"]'
   },
   gemini: {
+    name: 'Gemini',
+    enabled: false, // 架构支持，但暂不开启
     linkSelector: 'a[href*="/app/"]',
     urlPattern: /^\/app\/[a-z0-9]{10,}$/i,
     menuBtnSelector: 'button[aria-haspopup="true"]',
@@ -91,12 +96,12 @@ const getPlatform = () => {
  */
 const scanHistory = () => {
   const platform = getPlatform();
-  if (!platform) return [];
+  if (!platform || !PLATFORM_CONFIG[platform]) return [];
   const config = PLATFORM_CONFIG[platform];
   
   const links = Array.from(document.querySelectorAll(config.linkSelector));
   const results = [];
-  const seenIds = Set.prototype.constructor === Set ? new Set() : []; // Simple check for older envs
+  const seenIds = new Set();
 
   links.forEach((link) => {
     const href = link.getAttribute('href');
@@ -108,8 +113,8 @@ const scanHistory = () => {
     if (href.includes('/new') || href === '/') return;
     
     const rawId = path.split('/').pop();
-    if (seenIds instanceof Set && seenIds.has(rawId)) return;
-    if (seenIds instanceof Set) seenIds.add(rawId);
+    if (seenIds.has(rawId)) return;
+    seenIds.add(rawId);
 
     const titleEl = link.querySelector('.truncate, span[dir="auto"]');
     const title = titleEl ? titleEl.innerText : "Untitled Chat";
@@ -130,7 +135,7 @@ const deleteOne = async (item, config) => {
   if (!menuBtn) return false;
   
   link.scrollIntoView({ block: 'center' });
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
 
   const deleteBtn = await waitForElement(config.deleteBtnSelector);
@@ -145,7 +150,7 @@ const deleteOne = async (item, config) => {
   const isGone = await waitForDisappear(config.confirmBtnSelector);
   if (!isGone) return false;
 
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise(r => setTimeout(r, 1200));
   return true;
 };
 
@@ -168,6 +173,7 @@ const runBatchDelete = async () => {
         scannedItems = scannedItems.filter(it => it.id !== id);
         renderDashboard();
       } else {
+        // 如果删除失败，尝试按 Escape 键关闭可能存在的对话框
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         await new Promise(r => setTimeout(r, 500));
       }
@@ -184,7 +190,7 @@ const renderDashboard = () => {
   if (!container) return;
   
   if (scannedItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3><p>请确保侧边栏已展开</p></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3><p>请确保侧边栏已展开且包含历史记录</p></div>`;
   } else {
     container.innerHTML = scannedItems.map(item => `
       <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
@@ -220,6 +226,9 @@ const updateFooter = () => {
 };
 
 const toggleDashboard = () => {
+  const platform = getPlatform();
+  if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
+
   let overlay = document.getElementById('history-manager-overlay');
   if (!overlay) {
     initOverlay();
@@ -249,7 +258,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>多选管理对话</h2>
-          <p>选择您想要批量删除或整理的历史记录</p>
+          <p>选择您想要删除或整理的历史记录</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
@@ -281,7 +290,13 @@ const initOverlay = () => {
 };
 
 const injectLauncher = () => {
+  const platform = getPlatform();
+  // 仅在已启用的平台（目前为 ChatGPT）注入
+  if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
+  
   if (document.getElementById('history-manager-launcher')) return;
+  
+  // 查找侧边栏导航容器
   const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
   if (!sidebar) return;
 
@@ -296,16 +311,17 @@ const injectLauncher = () => {
   sidebar.appendChild(btn);
 };
 
-// 监听与初始启动
+// 监听 DOM 变化以重新注入按钮（防止单页应用路由切换导致元素丢失）
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
 
+// 初始延迟启动，确保侧边栏已渲染
 setTimeout(() => {
   injectLauncher();
   initOverlay();
 }, 2000);
 
-// 保持基础功能逻辑样式，复杂UI通过 content_style.css 控制
+// 添加处理中遮罩的样式切换
 const style = document.createElement('style');
 style.textContent = `
   .processing #processing-mask { display: flex !important; }

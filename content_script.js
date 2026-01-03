@@ -287,6 +287,8 @@ const runBatchMove = async (projectName) => {
       const success = await moveOne(item, projectName, config);
       if (success) {
         selectedIds.delete(id);
+        // 关键修复：迁移成功后，将项从扫描列表中移除，确保 UI 实时更新
+        scannedItems = scannedItems.filter(it => it.id !== id);
         renderDashboard();
       } else {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

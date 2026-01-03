@@ -5,9 +5,10 @@
 let isDashboardOpen = false;
 let scannedItems = []; 
 let selectedIds = new Set();
+let availableProjects = []; // 存储扫描到的项目名称
 let isProcessing = false;
 
-// 定义支持的平台配置，架构上支持多平台，但逻辑上可控开启
+// 定义支持的平台配置
 const PLATFORM_CONFIG = {
   chatgpt: {
     name: 'ChatGPT',
@@ -17,17 +18,17 @@ const PLATFORM_CONFIG = {
     menuBtnSelector: 'button[data-testid*="-options"]',
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
-    modalSelector: '[role="dialog"]'
+    moveLabel: '移至项目',
+    projectItemSelector: '[role="menuitem"]'
   },
   gemini: {
     name: 'Gemini',
-    enabled: false, // 架构支持，但暂不开启
+    enabled: false, 
     linkSelector: 'a[href*="/app/"]',
     urlPattern: /^\/app\/[a-z0-9]{10,}$/i,
     menuBtnSelector: 'button[aria-haspopup="true"]',
     deleteBtnSelector: '[role="menuitem"], .delete-button',
-    confirmBtnSelector: 'button.delete-confirm, .confirm-button',
-    modalSelector: '[role="dialog"]'
+    confirmBtnSelector: 'button.delete-confirm, .confirm-button'
   }
 };
 
@@ -55,12 +56,19 @@ const hardClick = (el) => {
 /**
  * 精准等待元素出现
  */
-const waitForElement = (selector, timeout = 3000) => {
+const waitForElement = (selector, timeout = 3000, textMatch = null) => {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const check = () => {
-      const el = document.querySelector(selector);
-      if (el && el.offsetParent !== null) resolve(el);
+      const els = document.querySelectorAll(selector);
+      let found = null;
+      if (textMatch) {
+        found = Array.from(els).find(el => el.innerText.includes(textMatch));
+      } else {
+        found = els[0];
+      }
+      
+      if (found && found.offsetParent !== null) resolve(found);
       else if (Date.now() - startTime > timeout) resolve(null);
       else setTimeout(check, 100);
     };
@@ -125,6 +133,58 @@ const scanHistory = () => {
 };
 
 /**
+ * 获取已有项目列表（通过模拟打开第一个选中项的菜单）
+ */
+const fetchProjects = async () => {
+  if (selectedIds.size === 0) {
+    alert('请先选择至少一个对话以获取项目列表');
+    return;
+  }
+  
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const firstId = Array.from(selectedIds)[0];
+  const item = scannedItems.find(it => it.id === firstId);
+  if (!item) return;
+
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return;
+
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return;
+
+  hardClick(menuBtn);
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, config.moveLabel);
+  if (!moveMenuItem) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return;
+  }
+
+  // 模拟 hover/点击 进入子菜单
+  hardClick(moveMenuItem);
+  await new Promise(r => setTimeout(r, 500));
+
+  // 获取子菜单中的所有项目链接
+  const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
+  const projects = [];
+  subMenuItems.forEach(el => {
+    const title = el.querySelector('.truncate')?.innerText;
+    if (title && title !== '新项目') {
+      projects.push(title);
+    }
+  });
+
+  availableProjects = [...new Set(projects)];
+  
+  // 关闭菜单
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await new Promise(r => setTimeout(r, 200));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  renderProjectDropdown();
+};
+
+/**
  * 自动化单次删除
  */
 const deleteOne = async (item, config) => {
@@ -154,6 +214,33 @@ const deleteOne = async (item, config) => {
   return true;
 };
 
+/**
+ * 自动化单次移动
+ */
+const moveOne = async (item, projectName, config) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return false;
+
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return false;
+  
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  hardClick(menuBtn);
+
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  if (!moveMenuItem) return false;
+  hardClick(moveMenuItem);
+
+  // 等待子菜单并寻找目标项目
+  const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
+  if (!targetProject) return false;
+
+  hardClick(targetProject);
+  await new Promise(r => setTimeout(r, 1500)); // 等待移动完成
+  return true;
+};
+
 const runBatchDelete = async () => {
   const ids = Array.from(selectedIds);
   if (!confirm(`确定要执行删除吗？共 ${ids.length} 项。`)) return;
@@ -173,7 +260,6 @@ const runBatchDelete = async () => {
         scannedItems = scannedItems.filter(it => it.id !== id);
         renderDashboard();
       } else {
-        // 如果删除失败，尝试按 Escape 键关闭可能存在的对话框
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         await new Promise(r => setTimeout(r, 500));
       }
@@ -183,6 +269,35 @@ const runBatchDelete = async () => {
   isProcessing = false;
   overlay.classList.remove('processing');
   alert('操作结束');
+};
+
+const runBatchMove = async (projectName) => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定将选中的 ${ids.length} 项对话移至项目“${projectName}”吗？`)) return;
+
+  isProcessing = true;
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  overlay.classList.add('processing');
+
+  for (const id of ids) {
+    const item = scannedItems.find(it => it.id === id);
+    if (item) {
+      const success = await moveOne(item, projectName, config);
+      if (success) {
+        selectedIds.delete(id);
+        renderDashboard();
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+
+  isProcessing = false;
+  overlay.classList.remove('processing');
+  alert('迁移操作结束');
 };
 
 const renderDashboard = () => {
@@ -218,11 +333,35 @@ const renderDashboard = () => {
   });
 };
 
+const renderProjectDropdown = () => {
+  const list = document.getElementById('available-projects-list');
+  if (!list) return;
+  
+  if (availableProjects.length === 0) {
+    list.innerHTML = `<div class="project-option-item disabled">无可用项目 (点击刷新)</div>`;
+  } else {
+    list.innerHTML = availableProjects.map(p => `
+      <div class="project-option-item" data-name="${p}">${p}</div>
+    `).join('');
+  }
+
+  list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
+    item.onclick = () => {
+      const projectName = item.dataset.name;
+      runBatchMove(projectName);
+      document.getElementById('project-dropdown').classList.remove('open');
+    };
+  });
+};
+
 const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
-  const btn = document.getElementById('dash-delete-btn');
+  const delBtn = document.getElementById('dash-delete-btn');
+  const moveBtn = document.getElementById('dash-move-trigger');
+  
   if (lbl) lbl.innerText = `${selectedIds.size} 项已选`;
-  if (btn) btn.disabled = selectedIds.size === 0 || isProcessing;
+  if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
+  if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
 };
 
 const toggleDashboard = () => {
@@ -240,6 +379,7 @@ const toggleDashboard = () => {
     overlay.style.setProperty('display', 'flex', 'important');
     scannedItems = scanHistory();
     selectedIds.clear();
+    availableProjects = [];
     renderDashboard();
     updateFooter();
   } else {
@@ -267,6 +407,14 @@ const initOverlay = () => {
         <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions">
           <button id="dash-refresh-btn" class="btn-secondary">刷新列表</button>
+          
+          <div id="project-dropdown" class="dropdown-wrapper">
+             <button id="dash-move-trigger" class="btn-secondary" disabled>移至项目 ▾</button>
+             <div id="available-projects-list" class="dropdown-content">
+                <div class="project-option-item disabled">点击获取项目列表</div>
+             </div>
+          </div>
+
           <button id="dash-delete-btn" class="btn-primary danger" disabled>执行删除</button>
         </div>
       </div>
@@ -285,18 +433,36 @@ const initOverlay = () => {
     e.stopPropagation();
     toggleDashboard();
   };
-  document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
+  
+  document.getElementById('dash-refresh-btn').onclick = () => { 
+    scannedItems = scanHistory(); 
+    renderDashboard(); 
+  };
+
+  const moveTrigger = document.getElementById('dash-move-trigger');
+  const dropdown = document.getElementById('project-dropdown');
+  
+  moveTrigger.onclick = (e) => {
+    e.stopPropagation();
+    dropdown.classList.toggle('open');
+    if (availableProjects.length === 0) {
+      fetchProjects();
+    }
+  };
+
+  window.addEventListener('click', () => {
+    dropdown.classList.remove('open');
+  });
+
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 };
 
 const injectLauncher = () => {
   const platform = getPlatform();
-  // 仅在已启用的平台（目前为 ChatGPT）注入
   if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
   
   if (document.getElementById('history-manager-launcher')) return;
   
-  // 查找侧边栏导航容器
   const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
   if (!sidebar) return;
 
@@ -311,17 +477,14 @@ const injectLauncher = () => {
   sidebar.appendChild(btn);
 };
 
-// 监听 DOM 变化以重新注入按钮（防止单页应用路由切换导致元素丢失）
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
 
-// 初始延迟启动，确保侧边栏已渲染
 setTimeout(() => {
   injectLauncher();
   initOverlay();
 }, 2000);
 
-// 添加处理中遮罩的样式切换
 const style = document.createElement('style');
 style.textContent = `
   .processing #processing-mask { display: flex !important; }

@@ -7,6 +7,7 @@ let scannedItems = [];
 let selectedIds = new Set();
 let availableProjects = []; // 存储扫描到的项目名称
 let isProcessing = false;
+let searchQuery = ''; // 搜索关键词
 
 // 定义支持的平台配置
 const PLATFORM_CONFIG = {
@@ -306,10 +307,17 @@ const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
   
+  // 模糊搜索逻辑
+  const filteredItems = scannedItems.filter(item => 
+    item.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   if (scannedItems.length === 0) {
     container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3><p>请确保侧边栏已展开且包含历史记录</p></div>`;
+  } else if (filteredItems.length === 0) {
+    container.innerHTML = `<div class="empty-state"><h3>未找到匹配结果</h3><p>尝试搜索其他关键词</p></div>`;
   } else {
-    container.innerHTML = scannedItems.map(item => `
+    container.innerHTML = filteredItems.map(item => `
       <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
         <div class="card-title">${item.title}</div>
         <div class="card-checkbox"></div>
@@ -382,6 +390,9 @@ const toggleDashboard = () => {
     scannedItems = scanHistory();
     selectedIds.clear();
     availableProjects = [];
+    searchQuery = ''; // 重置搜索
+    const searchInput = document.getElementById('dash-search-input');
+    if (searchInput) searchInput.value = '';
     renderDashboard();
     updateFooter();
   } else {
@@ -404,7 +415,16 @@ const initOverlay = () => {
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
+      
+      <div class="dashboard-search-container">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="dash-search-input" placeholder="模糊搜索历史记录..." />
+        </div>
+      </div>
+
       <div id="dashboard-items-grid" class="dashboard-body"></div>
+      
       <div class="dashboard-footer">
         <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions">
@@ -439,6 +459,13 @@ const initOverlay = () => {
   document.getElementById('dash-refresh-btn').onclick = () => { 
     scannedItems = scanHistory(); 
     renderDashboard(); 
+  };
+
+  // 搜索事件绑定
+  const searchInput = document.getElementById('dash-search-input');
+  searchInput.oninput = (e) => {
+    searchQuery = e.target.value;
+    renderDashboard();
   };
 
   const moveTrigger = document.getElementById('dash-move-trigger');

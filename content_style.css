@@ -95,6 +95,53 @@
 }
 #close-dash-btn:hover { background: rgba(0,0,0,0.05); opacity: 1; }
 
+/* 搜索栏样式 */
+.dashboard-search-container {
+  padding: 12px 24px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  .dashboard-search-container { border-bottom: 1px solid rgba(255,255,255,0.05); }
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  opacity: 0.4;
+}
+
+#dash-search-input {
+  width: 100%;
+  padding: 10px 12px 10px 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.1);
+  background: rgba(0,0,0,0.02);
+  color: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+}
+
+@media (prefers-color-scheme: dark) {
+  #dash-search-input {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+}
+
+#dash-search-input:focus {
+  border-color: #37365B;
+  box-shadow: 0 0 0 2px rgba(55, 54, 91, 0.1);
+  background: transparent;
+}
+
 /* Body Grid */
 .dashboard-body {
   flex: 1;

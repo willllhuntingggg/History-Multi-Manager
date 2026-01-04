@@ -5,12 +5,11 @@
 let isDashboardOpen = false;
 let scannedItems = []; 
 let selectedIds = new Set();
-let pivotId = null; // 锚点：最后一次手动点击的项
-let pivotState = true; // 锚点最后的操作状态（true为勾选，false为取消）
+let pivotId = null; // Gmail 风格锚点 ID
+let pivotState = true; // 锚点的状态（true 为选中，false 为取消）
 let availableProjects = []; 
 let isProcessing = false;
 let searchQuery = ''; 
-let isSearchExpanded = false;
 
 const PLATFORM_CONFIG = {
   chatgpt: {
@@ -64,19 +63,6 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
   });
 };
 
-const waitForDisappear = (selector, timeout = 4000) => {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const check = () => {
-      const el = document.querySelector(selector);
-      if (!el || el.offsetParent === null) resolve(true);
-      else if (Date.now() - startTime > timeout) resolve(false);
-      else setTimeout(check, 200);
-    };
-    check();
-  });
-};
-
 const getPlatform = () => {
   const host = window.location.hostname;
   if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
@@ -108,67 +94,64 @@ const scanHistory = () => {
 };
 
 /**
- * Batch Actions
+ * Project Fetching
  */
-const updateProgress = (current, total) => {
-  const el = document.getElementById('processing-progress-text');
-  if (el) el.innerText = `处理中: ${current} / ${total}`;
-};
-
-const runBatchDelete = async () => {
-  const ids = Array.from(selectedIds);
-  if (!confirm(`确定删除选中的 ${ids.length} 项对话吗？`)) return;
-
-  isProcessing = true;
+const fetchProjects = async () => {
   const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
-  const overlay = document.getElementById('history-manager-overlay');
-  overlay.classList.add('processing');
+  if (!platform || platform !== 'chatgpt') return;
+  
+  const testItem = scannedItems[0];
+  if (!testItem) return;
 
-  let currentCount = 0;
-  for (const id of ids) {
-    currentCount++;
-    updateProgress(currentCount, ids.length);
-    const item = scannedItems.find(it => it.id === id);
-    if (item) {
-      const success = await deleteOne(item, config);
-      if (success) {
-        selectedIds.delete(id);
-        scannedItems = scannedItems.filter(it => it.id !== id);
-        renderDashboard();
-      } else {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        await new Promise(r => setTimeout(r, 500));
-      }
-    }
+  const config = PLATFORM_CONFIG[platform];
+  const link = document.querySelector(`${config.linkSelector}[href="${testItem.url}"]`);
+  if (!link) return;
+
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return;
+
+  hardClick(menuBtn);
+  const moveBtn = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  if (!moveBtn) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return;
   }
-  isProcessing = false;
-  overlay.classList.remove('processing');
-  alert('操作结束');
+  
+  hardClick(moveBtn);
+  await new Promise(r => setTimeout(r, 600));
+  
+  const items = document.querySelectorAll('[role="menu"] [role="menuitem"]');
+  const projects = [];
+  items.forEach(it => {
+    const text = it.innerText.trim();
+    if (text && text !== '新项目' && text !== '移至项目') projects.push(text);
+  });
+
+  availableProjects = [...new Set(projects)];
+  renderProjectList();
+  
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  setTimeout(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), 200);
 };
 
-const deleteOne = async (item, config) => {
-  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
-  if (!link) return false;
-  const menuBtn = link.querySelector(config.menuBtnSelector);
-  if (!menuBtn) return false;
-  link.scrollIntoView({ block: 'center' });
-  await new Promise(r => setTimeout(r, 400));
-  hardClick(menuBtn);
-  const deleteBtn = await waitForElement(config.deleteBtnSelector);
-  if (!deleteBtn) return false;
-  hardClick(deleteBtn);
-  const confirmBtn = await waitForElement(config.confirmBtnSelector);
-  if (!confirmBtn) return false;
-  hardClick(confirmBtn);
-  const isGone = await waitForDisappear(config.confirmBtnSelector);
-  if (!isGone) return false;
-  await new Promise(r => setTimeout(r, 1200));
-  return true;
+const renderProjectList = () => {
+  const list = document.getElementById('available-projects-list');
+  if (!list) return;
+  if (availableProjects.length === 0) {
+    list.innerHTML = `<div class="project-option disabled">未发现项目</div>`;
+  } else {
+    list.innerHTML = availableProjects.map(p => `<div class="project-option" data-name="${p}">${p}</div>`).join('');
+    list.querySelectorAll('.project-option').forEach(opt => {
+      opt.onclick = (e) => {
+        e.stopPropagation();
+        runBatchMove(opt.dataset.name);
+      };
+    });
+  }
 };
 
 /**
- * Dashboard Rendering
+ * UI Logic
  */
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
@@ -178,18 +161,14 @@ const renderDashboard = () => {
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  if (scannedItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3></div>`;
-  } else if (filteredItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>无匹配项</h3></div>`;
-  } else {
-    container.innerHTML = filteredItems.map(item => `
+  container.innerHTML = filteredItems.length === 0 
+    ? `<div class="empty-state"><h3>无结果</h3></div>`
+    : filteredItems.map(item => `
       <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
         <div class="card-title">${item.title}</div>
         <div class="card-checkbox"></div>
       </div>
     `).join('');
-  }
   
   container.querySelectorAll('.chat-card').forEach(card => {
     card.onclick = (e) => {
@@ -199,19 +178,17 @@ const renderDashboard = () => {
       const currentVisibleIds = filteredItems.map(it => it.id);
 
       if (isShift && pivotId) {
-        // Gmail 风格：同步范围内所有项到锚点的状态
-        const startIndex = currentVisibleIds.indexOf(pivotId);
-        const endIndex = currentVisibleIds.indexOf(id);
-        if (startIndex !== -1 && endIndex !== -1) {
-          const [min, max] = [Math.min(startIndex, endIndex), Math.max(startIndex, endIndex)];
-          const rangeIds = currentVisibleIds.slice(min, max + 1);
-          rangeIds.forEach(rid => {
+        const startIdx = currentVisibleIds.indexOf(pivotId);
+        const endIdx = currentVisibleIds.indexOf(id);
+        if (startIdx !== -1 && endIdx !== -1) {
+          const [min, max] = [Math.min(startIdx, endIdx), Math.max(startIdx, endIdx)];
+          const range = currentVisibleIds.slice(min, max + 1);
+          range.forEach(rid => {
             if (pivotState) selectedIds.add(rid);
             else selectedIds.delete(rid);
           });
         }
       } else {
-        // 普通点击：切换状态并设为新锚点
         if (selectedIds.has(id)) {
           selectedIds.delete(id);
           pivotState = false;
@@ -236,24 +213,7 @@ const updateFooter = () => {
   if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
 };
 
-const toggleSearch = () => {
-  isSearchExpanded = !isSearchExpanded;
-  const container = document.querySelector('.search-bar-container');
-  const input = document.getElementById('dash-search-input');
-  if (isSearchExpanded) {
-    container.classList.add('expanded');
-    input.focus();
-  } else {
-    container.classList.remove('expanded');
-    searchQuery = '';
-    input.value = '';
-    renderDashboard();
-  }
-};
-
 const toggleDashboard = () => {
-  const platform = getPlatform();
-  if (!platform) return;
   let overlay = document.getElementById('history-manager-overlay');
   if (!overlay) { initOverlay(); overlay = document.getElementById('history-manager-overlay'); }
   
@@ -264,7 +224,8 @@ const toggleDashboard = () => {
     selectedIds.clear();
     pivotId = null;
     searchQuery = '';
-    isSearchExpanded = false;
+    const searchInput = document.getElementById('dash-search-input');
+    if (searchInput) searchInput.value = '';
     renderDashboard();
     updateFooter();
   } else {
@@ -279,24 +240,21 @@ const initOverlay = () => {
   overlay.innerHTML = `
     <div class="dashboard-window">
       <div class="dashboard-header">
-        <div class="header-info">
-          <h2>对话多选管理</h2>
+        <div class="search-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="dash-search-input" placeholder="搜索对话..." />
         </div>
-        <div class="header-actions">
-          <div class="search-bar-container">
-            <button id="search-toggle-btn" class="icon-btn" title="搜索">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            </button>
-            <input type="text" id="dash-search-input" placeholder="输入关键词..." />
-          </div>
-          <button id="close-dash-btn" class="icon-btn">✕</button>
+        <div class="header-right">
+          <button id="close-dash-btn" class="icon-btn" title="关闭">✕</button>
         </div>
       </div>
       <div id="dashboard-items-grid" class="dashboard-body"></div>
       <div class="dashboard-footer">
-        <span id="selected-count-label">0 项已选</span>
+        <div class="footer-left">
+           <span id="selected-count-label">0 项已选</span>
+        </div>
         <div class="footer-actions">
-          <button id="dash-refresh-btn" class="btn-secondary">刷新列表</button>
+          <button id="dash-refresh-btn" class="btn-secondary">刷新</button>
           <div id="project-dropdown" class="dropdown-wrapper">
              <button id="dash-move-trigger" class="btn-secondary" disabled>移至项目 ▾</button>
              <div id="available-projects-list" class="dropdown-content"></div>
@@ -307,39 +265,122 @@ const initOverlay = () => {
       <div id="processing-mask">
          <div class="processing-card">
             <div class="spinner"></div>
-            <span id="processing-progress-text">正在自动处理...</span>
+            <span id="processing-progress-text">处理中...</span>
          </div>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('close-dash-btn').onclick = () => toggleDashboard();
-  document.getElementById('search-toggle-btn').onclick = () => toggleSearch();
+  
+  document.getElementById('close-dash-btn').onclick = (e) => { e.stopPropagation(); toggleDashboard(); };
   document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
   document.getElementById('dash-search-input').oninput = (e) => { searchQuery = e.target.value; renderDashboard(); };
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
   
   const moveTrigger = document.getElementById('dash-move-trigger');
   const dropdown = document.getElementById('project-dropdown');
-  moveTrigger.onclick = (e) => { e.stopPropagation(); dropdown.classList.toggle('open'); };
-  window.addEventListener('click', () => dropdown.classList.remove('open'));
+  moveTrigger.onclick = (e) => { 
+    e.stopPropagation(); 
+    dropdown.classList.toggle('open'); 
+    if (dropdown.classList.contains('open') && availableProjects.length === 0) fetchProjects();
+  };
+  
+  window.addEventListener('click', () => {
+    if (dropdown.classList.contains('open')) dropdown.classList.remove('open');
+  });
+};
+
+/**
+ * Automations
+ */
+const runBatchDelete = async () => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定删除这 ${ids.length} 项对话吗？`)) return;
+  isProcessing = true;
+  document.getElementById('history-manager-overlay').classList.add('processing');
+  
+  const config = PLATFORM_CONFIG[getPlatform()];
+  for (let i = 0; i < ids.length; i++) {
+    document.getElementById('processing-progress-text').innerText = `正在删除: ${i + 1} / ${ids.length}`;
+    const item = scannedItems.find(it => it.id === ids[i]);
+    if (item) await deleteOne(item, config);
+    selectedIds.delete(ids[i]);
+    scannedItems = scannedItems.filter(it => it.id !== ids[i]);
+    renderDashboard();
+    updateFooter();
+  }
+  isProcessing = false;
+  document.getElementById('history-manager-overlay').classList.remove('processing');
+};
+
+const deleteOne = async (item, config) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return;
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return;
+  hardClick(menuBtn);
+  const del = await waitForElement(config.deleteBtnSelector);
+  if (del) {
+    hardClick(del);
+    const confirm = await waitForElement(config.confirmBtnSelector);
+    if (confirm) hardClick(confirm);
+    await new Promise(r => setTimeout(r, 1200));
+  }
+};
+
+const runBatchMove = async (projectName) => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定将选中的 ${ids.length} 项移至“${projectName}”吗？`)) return;
+  isProcessing = true;
+  document.getElementById('history-manager-overlay').classList.add('processing');
+  document.getElementById('project-dropdown').classList.remove('open');
+  
+  const config = PLATFORM_CONFIG[getPlatform()];
+  for (let i = 0; i < ids.length; i++) {
+    document.getElementById('processing-progress-text').innerText = `正在移动: ${i + 1} / ${ids.length}`;
+    const item = scannedItems.find(it => it.id === ids[i]);
+    if (item) await moveOne(item, projectName, config);
+    selectedIds.delete(ids[i]);
+    renderDashboard();
+    updateFooter();
+  }
+  isProcessing = false;
+  document.getElementById('history-manager-overlay').classList.remove('processing');
+};
+
+const moveOne = async (item, projectName, config) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return;
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return;
+  hardClick(menuBtn);
+  const moveBtn = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  if (moveBtn) {
+    hardClick(moveBtn);
+    const target = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
+    if (target) hardClick(target);
+    await new Promise(r => setTimeout(r, 1500));
+  }
 };
 
 const injectLauncher = () => {
-  const platform = getPlatform();
-  if (!platform || document.getElementById('history-manager-launcher')) return;
+  if (document.getElementById('history-manager-launcher')) return;
   const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
   if (!sidebar) return;
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
-  btn.innerHTML = `<span>☑</span> 多选`;
-  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
+  btn.innerHTML = `<span>☑</span> 多选管理`;
+  btn.onclick = (e) => { e.preventDefault(); toggleDashboard(); };
   sidebar.appendChild(btn);
 };
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
-setTimeout(injectLauncher, 1500);
+setTimeout(injectLauncher, 1000);
 
 const style = document.createElement('style');
 style.textContent = `.processing #processing-mask { display: flex !important; }`;

@@ -8,6 +8,7 @@ let selectedIds = new Set();
 let availableProjects = []; // 存储扫描到的项目名称
 let isProcessing = false;
 let searchQuery = ''; // 搜索关键词
+let lastClickedId = null; // 用于 Shift 范围选择
 
 // 定义支持的平台配置
 const PLATFORM_CONFIG = {
@@ -134,7 +135,7 @@ const scanHistory = () => {
 };
 
 /**
- * 获取已有项目列表（通过模拟打开第一个选中项的菜单）
+ * 获取已有项目列表
  */
 const fetchProjects = async () => {
   if (selectedIds.size === 0) {
@@ -161,11 +162,9 @@ const fetchProjects = async () => {
     return;
   }
 
-  // 模拟 hover/点击 进入子菜单
   hardClick(moveMenuItem);
   await new Promise(r => setTimeout(r, 500));
 
-  // 获取子菜单中的所有项目链接
   const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
   const projects = [];
   subMenuItems.forEach(el => {
@@ -177,7 +176,6 @@ const fetchProjects = async () => {
 
   availableProjects = [...new Set(projects)];
   
-  // 关闭菜单
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await new Promise(r => setTimeout(r, 200));
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -186,60 +184,52 @@ const fetchProjects = async () => {
 };
 
 /**
- * 自动化单次删除
+ * 自动化单次操作
  */
 const deleteOne = async (item, config) => {
   const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
   if (!link) return false;
-
   const menuBtn = link.querySelector(config.menuBtnSelector);
   if (!menuBtn) return false;
-  
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
-
   const deleteBtn = await waitForElement(config.deleteBtnSelector);
   if (!deleteBtn) return false;
   hardClick(deleteBtn);
-
   const confirmBtn = await waitForElement(config.confirmBtnSelector);
   if (!confirmBtn) return false;
-  
   hardClick(confirmBtn);
-
   const isGone = await waitForDisappear(config.confirmBtnSelector);
   if (!isGone) return false;
-
   await new Promise(r => setTimeout(r, 1200));
   return true;
 };
 
-/**
- * 自动化单次移动
- */
 const moveOne = async (item, projectName, config) => {
   const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
   if (!link) return false;
-
   const menuBtn = link.querySelector(config.menuBtnSelector);
   if (!menuBtn) return false;
-  
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
-
   const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
   if (!moveMenuItem) return false;
   hardClick(moveMenuItem);
-
-  // 等待子菜单并寻找目标项目
   const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
   if (!targetProject) return false;
-
   hardClick(targetProject);
-  await new Promise(r => setTimeout(r, 1500)); // 等待移动完成
+  await new Promise(r => setTimeout(r, 1500));
   return true;
+};
+
+/**
+ * 更新处理进度文本
+ */
+const updateProgress = (current, total) => {
+  const el = document.getElementById('processing-progress-text');
+  if (el) el.innerText = `正在处理第 ${current} / ${total} 项...`;
 };
 
 const runBatchDelete = async () => {
@@ -252,7 +242,12 @@ const runBatchDelete = async () => {
   const overlay = document.getElementById('history-manager-overlay');
   overlay.classList.add('processing');
 
+  const total = ids.length;
+  let currentCount = 0;
+
   for (const id of ids) {
+    currentCount++;
+    updateProgress(currentCount, total);
     const item = scannedItems.find(it => it.id === id);
     if (item) {
       const success = await deleteOne(item, config);
@@ -282,13 +277,17 @@ const runBatchMove = async (projectName) => {
   const overlay = document.getElementById('history-manager-overlay');
   overlay.classList.add('processing');
 
+  const total = ids.length;
+  let currentCount = 0;
+
   for (const id of ids) {
+    currentCount++;
+    updateProgress(currentCount, total);
     const item = scannedItems.find(it => it.id === id);
     if (item) {
       const success = await moveOne(item, projectName, config);
       if (success) {
         selectedIds.delete(id);
-        // 关键修复：迁移成功后，将项从扫描列表中移除，确保 UI 实时更新
         scannedItems = scannedItems.filter(it => it.id !== id);
         renderDashboard();
       } else {
@@ -307,7 +306,6 @@ const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
   
-  // 模糊搜索逻辑
   const filteredItems = scannedItems.filter(item => 
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -330,14 +328,34 @@ const renderDashboard = () => {
       e.preventDefault();
       e.stopPropagation();
       if (isProcessing) return;
+      
       const id = card.dataset.id;
-      if (selectedIds.has(id)) {
-        selectedIds.delete(id);
-        card.classList.remove('selected');
+      const isShift = e.shiftKey;
+      const isJump = e.metaKey || e.ctrlKey; // Mac: Cmd, Win: Ctrl
+
+      if (isShift && lastClickedId) {
+        // Shift 范围选择逻辑 (基于当前过滤后的可见项)
+        const currentIds = filteredItems.map(it => it.id);
+        const lastIndex = currentIds.indexOf(lastClickedId);
+        const currentIndex = currentIds.indexOf(id);
+        
+        if (lastIndex !== -1 && currentIndex !== -1) {
+          const [start, end] = [Math.min(lastIndex, currentIndex), Math.max(lastIndex, currentIndex)];
+          for (let i = start; i <= end; i++) {
+            selectedIds.add(currentIds[i]);
+          }
+        }
       } else {
-        selectedIds.add(id);
-        card.classList.add('selected');
+        // 正常选择或跳选
+        if (selectedIds.has(id)) {
+          selectedIds.delete(id);
+        } else {
+          selectedIds.add(id);
+        }
       }
+
+      lastClickedId = id;
+      renderDashboard(); // 重新渲染以更新状态
       updateFooter();
     };
   });
@@ -346,15 +364,11 @@ const renderDashboard = () => {
 const renderProjectDropdown = () => {
   const list = document.getElementById('available-projects-list');
   if (!list) return;
-  
   if (availableProjects.length === 0) {
     list.innerHTML = `<div class="project-option-item disabled">无可用项目 (点击刷新)</div>`;
   } else {
-    list.innerHTML = availableProjects.map(p => `
-      <div class="project-option-item" data-name="${p}">${p}</div>
-    `).join('');
+    list.innerHTML = availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('');
   }
-
   list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
     item.onclick = () => {
       const projectName = item.dataset.name;
@@ -368,7 +382,6 @@ const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
   const moveBtn = document.getElementById('dash-move-trigger');
-  
   if (lbl) lbl.innerText = `${selectedIds.size} 项已选`;
   if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
   if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
@@ -377,145 +390,100 @@ const updateFooter = () => {
 const toggleDashboard = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
-
   let overlay = document.getElementById('history-manager-overlay');
   if (!overlay) {
     initOverlay();
     overlay = document.getElementById('history-manager-overlay');
   }
-
   isDashboardOpen = !isDashboardOpen;
   if (isDashboardOpen) {
     overlay.style.setProperty('display', 'flex', 'important');
     scannedItems = scanHistory();
     selectedIds.clear();
     availableProjects = [];
-    searchQuery = ''; // 重置搜索
+    searchQuery = '';
+    lastClickedId = null;
     const searchInput = document.getElementById('dash-search-input');
     if (searchInput) searchInput.value = '';
     renderDashboard();
     updateFooter();
   } else {
-    overlay.style.setProperty('display', 'none', 'important');
+    overlay.style.setProperty('none', 'important');
+    overlay.style.display = 'none';
   }
 };
 
 const initOverlay = () => {
   if (document.getElementById('history-manager-overlay')) return;
-  
   const overlay = document.createElement('div');
   overlay.id = 'history-manager-overlay';
-  
   overlay.innerHTML = `
     <div class="dashboard-window">
       <div class="dashboard-header">
         <div class="header-info">
           <h2>多选管理对话</h2>
-          <p>选择您想要删除或整理的历史记录</p>
+          <p>支持 Shift 连选及 Ctrl/Cmd 跳选</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
-      
       <div class="dashboard-search-container">
         <div class="search-input-wrapper">
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
           <input type="text" id="dash-search-input" placeholder="模糊搜索历史记录..." />
         </div>
       </div>
-
       <div id="dashboard-items-grid" class="dashboard-body"></div>
-      
       <div class="dashboard-footer">
         <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions">
           <button id="dash-refresh-btn" class="btn-secondary">刷新列表</button>
-          
           <div id="project-dropdown" class="dropdown-wrapper">
              <button id="dash-move-trigger" class="btn-secondary" disabled>移至项目 ▾</button>
              <div id="available-projects-list" class="dropdown-content">
                 <div class="project-option-item disabled">点击获取项目列表</div>
              </div>
           </div>
-
           <button id="dash-delete-btn" class="btn-primary danger" disabled>执行删除</button>
         </div>
       </div>
       <div id="processing-mask">
          <div class="processing-card">
             <div class="spinner"></div>
-            <span>正在执行自动化操作，请勿关闭窗口...</span>
+            <span id="processing-main-text">正在执行自动化操作...</span>
+            <span id="processing-progress-text" style="font-size: 12px; opacity: 0.6; margin-top: -8px;"></span>
          </div>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
-
-  document.getElementById('close-dash-btn').onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleDashboard();
-  };
-  
-  document.getElementById('dash-refresh-btn').onclick = () => { 
-    scannedItems = scanHistory(); 
-    renderDashboard(); 
-  };
-
-  // 搜索事件绑定
+  document.getElementById('close-dash-btn').onclick = () => toggleDashboard();
+  document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
   const searchInput = document.getElementById('dash-search-input');
-  searchInput.oninput = (e) => {
-    searchQuery = e.target.value;
-    renderDashboard();
-  };
-
+  searchInput.oninput = (e) => { searchQuery = e.target.value; renderDashboard(); };
   const moveTrigger = document.getElementById('dash-move-trigger');
   const dropdown = document.getElementById('project-dropdown');
-  
-  moveTrigger.onclick = (e) => {
-    e.stopPropagation();
-    dropdown.classList.toggle('open');
-    if (availableProjects.length === 0) {
-      fetchProjects();
-    }
-  };
-
-  window.addEventListener('click', () => {
-    dropdown.classList.remove('open');
-  });
-
+  moveTrigger.onclick = (e) => { e.stopPropagation(); dropdown.classList.toggle('open'); if (availableProjects.length === 0) fetchProjects(); };
+  window.addEventListener('click', () => dropdown.classList.remove('open'));
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 };
 
 const injectLauncher = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
-  
   if (document.getElementById('history-manager-launcher')) return;
-  
   const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
   if (!sidebar) return;
-
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
   btn.innerHTML = `<span>☑</span> 多选`;
-  btn.onclick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleDashboard();
-  };
+  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   sidebar.appendChild(btn);
 };
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
-
-setTimeout(() => {
-  injectLauncher();
-  initOverlay();
-}, 2000);
+setTimeout(() => { injectLauncher(); initOverlay(); }, 2000);
 
 const style = document.createElement('style');
-style.textContent = `
-  .processing #processing-mask { display: flex !important; }
-`;
+style.textContent = `.processing #processing-mask { display: flex !important; }`;
 document.head.appendChild(style);

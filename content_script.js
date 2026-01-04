@@ -5,10 +5,12 @@
 let isDashboardOpen = false;
 let scannedItems = []; 
 let selectedIds = new Set();
-let availableProjects = []; // 存储扫描到的项目名称
+let baseSelection = new Set(); // 记录 Shift 操作开始前的选择状态
+let pivotId = null; // Shift 操作的基准点（锚点）
+let availableProjects = []; 
 let isProcessing = false;
-let searchQuery = ''; // 搜索关键词
-let lastClickedId = null; // 用于 Shift 范围选择
+let searchQuery = ''; 
+let platformConfigEnabled = true;
 
 // 定义支持的平台配置
 const PLATFORM_CONFIG = {
@@ -331,31 +333,43 @@ const renderDashboard = () => {
       
       const id = card.dataset.id;
       const isShift = e.shiftKey;
-      const isJump = e.metaKey || e.ctrlKey; // Mac: Cmd, Win: Ctrl
 
-      if (isShift && lastClickedId) {
-        // Shift 范围选择逻辑 (基于当前过滤后的可见项)
-        const currentIds = filteredItems.map(it => it.id);
-        const lastIndex = currentIds.indexOf(lastClickedId);
-        const currentIndex = currentIds.indexOf(id);
+      const currentIds = filteredItems.map(it => it.id);
+      
+      if (isShift && pivotId) {
+        // Shift 范围选择逻辑：基于锚点和当前基准选择状态
+        const startIndex = currentIds.indexOf(pivotId);
+        const endIndex = currentIds.indexOf(id);
         
-        if (lastIndex !== -1 && currentIndex !== -1) {
-          const [start, end] = [Math.min(lastIndex, currentIndex), Math.max(lastIndex, currentIndex)];
-          for (let i = start; i <= end; i++) {
-            selectedIds.add(currentIds[i]);
-          }
+        if (startIndex !== -1 && endIndex !== -1) {
+          const [min, max] = [Math.min(startIndex, endIndex), Math.max(startIndex, endIndex)];
+          const rangeIds = currentIds.slice(min, max + 1);
+          
+          // 决定是增加还是减少：取决于 pivotId 在点击那一刻的状态
+          const shouldSelect = baseSelection.has(pivotId);
+          
+          // 从基准状态开始重新计算当前所有选择
+          const newSelection = new Set(baseSelection);
+          rangeIds.forEach(rid => {
+            if (shouldSelect) newSelection.add(rid);
+            else newSelection.delete(rid);
+          });
+          
+          selectedIds = newSelection;
         }
       } else {
-        // 正常选择或跳选
+        // 普通点击：切换状态并更新锚点
         if (selectedIds.has(id)) {
           selectedIds.delete(id);
         } else {
           selectedIds.add(id);
         }
+        // 更新锚点和基准状态，确保下一次 Shift 操作基于此点击
+        pivotId = id;
+        baseSelection = new Set(selectedIds);
       }
 
-      lastClickedId = id;
-      renderDashboard(); // 重新渲染以更新状态
+      renderDashboard(); 
       updateFooter();
     };
   });
@@ -400,15 +414,15 @@ const toggleDashboard = () => {
     overlay.style.setProperty('display', 'flex', 'important');
     scannedItems = scanHistory();
     selectedIds.clear();
+    baseSelection.clear();
     availableProjects = [];
     searchQuery = '';
-    lastClickedId = null;
+    pivotId = null;
     const searchInput = document.getElementById('dash-search-input');
     if (searchInput) searchInput.value = '';
     renderDashboard();
     updateFooter();
   } else {
-    overlay.style.setProperty('none', 'important');
     overlay.style.display = 'none';
   }
 };
@@ -422,7 +436,7 @@ const initOverlay = () => {
       <div class="dashboard-header">
         <div class="header-info">
           <h2>多选管理对话</h2>
-          <p>支持 Shift 连选及 Ctrl/Cmd 跳选</p>
+          <p>支持 Shift 连选（含反选/范围缩减）</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>

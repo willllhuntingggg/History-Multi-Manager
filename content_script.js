@@ -25,9 +25,9 @@ const I18N = {
     moving: '正在移动',
     confirmDelete: '确定删除这 {n} 项对话吗？',
     confirmMove: '确定将选中的 {n} 项移至“{p}”吗？',
-    noChats: '未发现对话',
-    noProjects: '未发现项目',
-    close: '关闭'
+    noChats: '未发现对话记录',
+    noProjects: '未发现项目列表',
+    close: '关闭窗口'
   },
   en: {
     launcher: 'History Manager',
@@ -55,13 +55,14 @@ const PLATFORM_CONFIG = {
     menuBtnSelector: 'button[data-testid*="-options"]',
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
-    moveLabel: '移至项目',
+    moveLabel: '移至项目', // ChatGPT 内部 UI 的中文标签
+    moveLabelEn: 'Move to project',
     projectItemSelector: '[role="menuitem"]'
   }
 };
 
 /**
- * Helpers
+ * Robust Interaction Helpers
  */
 const getT = () => I18N[currentLang] || I18N.zh;
 
@@ -82,7 +83,11 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
     const startTime = Date.now();
     const check = () => {
       const els = document.querySelectorAll(selector);
-      let found = Array.from(els).find(el => textMatch ? el.innerText.includes(textMatch) : true);
+      let found = Array.from(els).find(el => {
+        if (!textMatch) return true;
+        const txt = el.innerText.trim().toLowerCase();
+        return txt.includes(textMatch.toLowerCase());
+      });
       if (found && found.offsetParent !== null) resolve(found);
       else if (Date.now() - startTime > timeout) resolve(null);
       else setTimeout(check, 100);
@@ -121,7 +126,7 @@ const scanHistory = () => {
 };
 
 /**
- * Project Logic
+ * Projects Logic
  */
 const fetchProjects = async () => {
   if (getPlatform() !== 'chatgpt') return;
@@ -134,7 +139,10 @@ const fetchProjects = async () => {
   if (!menuBtn) return;
 
   hardClick(menuBtn);
-  const moveBtn = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  // 兼容中英文
+  const moveBtn = await waitForElement(config.projectItemSelector, 1500, config.moveLabel) || 
+                  await waitForElement(config.projectItemSelector, 100, config.moveLabelEn);
+  
   if (!moveBtn) {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return;
@@ -146,7 +154,9 @@ const fetchProjects = async () => {
   const projects = [];
   items.forEach(it => {
     const text = it.innerText.trim();
-    if (text && !['新项目', '移至项目', 'New Project', 'Move to Project'].includes(text)) projects.push(text);
+    if (text && !['新项目', '移至项目', 'New Project', 'Move to Project', 'Move to project'].includes(text)) {
+      projects.push(text);
+    }
   });
   availableProjects = [...new Set(projects)];
   renderProjectList();
@@ -253,6 +263,7 @@ const toggleDashboard = () => {
     const input = document.getElementById('dash-search-input');
     if (input) input.value = '';
     syncLangUI();
+    if (availableProjects.length === 0) fetchProjects();
   } else {
     overlay.style.display = 'none';
   }
@@ -297,12 +308,15 @@ const initOverlay = () => {
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
   const moveTrigger = document.getElementById('dash-move-trigger');
   const dropdown = document.getElementById('project-dropdown');
-  moveTrigger.onclick = (e) => { e.stopPropagation(); dropdown.classList.toggle('open'); if (availableProjects.length === 0) fetchProjects(); };
+  moveTrigger.onclick = (e) => { 
+    e.stopPropagation(); 
+    dropdown.classList.toggle('open'); 
+  };
   window.addEventListener('click', () => dropdown.classList.remove('open'));
 };
 
 /**
- * Actions
+ * Automations
  */
 const runBatchDelete = async () => {
   const t = getT();
@@ -369,7 +383,9 @@ const moveOne = async (item, projectName, config) => {
   const menuBtn = link.querySelector(config.menuBtnSelector);
   if (!menuBtn) return;
   hardClick(menuBtn);
-  const moveBtn = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  // 兼容中英文
+  const moveBtn = await waitForElement(config.projectItemSelector, 1500, config.moveLabel) || 
+                  await waitForElement(config.projectItemSelector, 100, config.moveLabelEn);
   if (moveBtn) {
     hardClick(moveBtn);
     const target = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);

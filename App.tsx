@@ -34,11 +34,11 @@ const App: React.FC = () => {
       title: '对话历史管理',
       ready: '准备就绪：ChatGPT',
       notSupported: '请在 ChatGPT 页面使用',
-      step1: '点击侧边栏的 <strong class="text-indigo-600">"☑ 多选管理"</strong>。',
-      step2: '像使用 Gmail 一样，配合 <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> 键进行多选。',
-      step3: '一键批量搜索、删除或移动对话到项目。',
-      howTo: '如何开始',
-      openBtn: '打开 ChatGPT',
+      step1: '点击侧边栏顶部的 <strong class="text-indigo-600">"☑ 多选管理"</strong>。',
+      step2: '配合 <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> 键可进行批量连选。',
+      step3: '支持批量删除、批量移动至项目、关键词搜索。',
+      howTo: '操作指南',
+      openBtn: '进入 ChatGPT',
       langBtn: 'English'
     },
     en: {
@@ -46,8 +46,8 @@ const App: React.FC = () => {
       ready: 'Ready for ChatGPT',
       notSupported: 'Please open ChatGPT to use',
       step1: 'Click <strong class="text-indigo-600">"☑ History Manager"</strong> in the sidebar.',
-      step2: 'Use <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> + click to select items like Gmail.',
-      step3: 'Batch Search, Delete, or Move chats in seconds.',
+      step2: 'Use <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> + Click for bulk selection.',
+      step3: 'Batch Delete, Batch Move to Projects, and Search filters.',
       howTo: 'How to use',
       openBtn: 'Go to ChatGPT',
       langBtn: '中文'
@@ -109,7 +109,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-center items-center">
-        <span className="text-[10px] text-slate-400 font-medium tracking-wide">V1.0.0</span>
+        <span className="text-[10px] text-slate-400 font-medium tracking-wide">VERSION 1.0.0</span>
       </footer>
     </div>
   );

@@ -1,5 +1,6 @@
 {
   "name": "Chat History Multi-Manager",
-  "description": "A powerful extension to multi-select and batch manage chat histories on ChatGPT and Google Gemini.",
+  "description": "A powerful extension to multi-select and batch manage chat histories on ChatGPT.",
+  "version": "1.0.0",
   "requestFramePermissions": []
 }

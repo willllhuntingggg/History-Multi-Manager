@@ -12,7 +12,6 @@ const App: React.FC = () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
         setCurrentTab(tabs[0] || null);
       });
-      // 获取保存的语言设置
       chrome.storage.local.get(['lang'], (result: any) => {
         if (result.lang) setLang(result.lang);
       });
@@ -22,7 +21,9 @@ const App: React.FC = () => {
   const toggleLang = () => {
     const newLang = lang === 'zh' ? 'en' : 'zh';
     setLang(newLang);
-    chrome.storage.local.set({ lang: newLang });
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ lang: newLang });
+    }
   };
 
   const isSupported = currentTab?.url?.includes('chatgpt.com') || 
@@ -54,7 +55,7 @@ const App: React.FC = () => {
   }[lang];
 
   return (
-    <div className="p-0 font-sans text-slate-800 bg-white select-none">
+    <div className="p-0 font-sans text-slate-800 bg-white select-none w-[350px]">
       <header className="px-5 py-4 bg-indigo-600 text-white flex items-center justify-between shadow-md">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-white rounded flex items-center justify-center">

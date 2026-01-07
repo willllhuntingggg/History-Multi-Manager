@@ -63,7 +63,7 @@ const PLATFORM_CONFIG = {
 /**
  * Helpers
  */
-const getT = () => I18N[currentLang];
+const getT = () => I18N[currentLang] || I18N.zh;
 
 const hardClick = (el) => {
   if (!el) return;
@@ -395,7 +395,7 @@ const injectLauncher = () => {
 if (typeof chrome !== 'undefined' && chrome.storage) {
   chrome.storage.local.get(['lang'], (res) => {
     if (res.lang) currentLang = res.lang;
-    if (isDashboardOpen) syncLangUI();
+    syncLangUI();
   });
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.lang) {

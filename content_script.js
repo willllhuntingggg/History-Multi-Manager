@@ -5,71 +5,50 @@
 let isDashboardOpen = false;
 let scannedItems = []; 
 let selectedIds = new Set();
-let pivotId = null; 
-let pivotStatus = true; 
+let baseSelection = new Set(); // 记录 Shift 操作开始前的选择状态
+let pivotId = null; // Shift 操作的基准点（锚点）
 let availableProjects = []; 
 let isProcessing = false;
 let searchQuery = ''; 
-let currentLang = 'zh';
+let platformConfigEnabled = true;
 
-const I18N = {
-  zh: {
-    launcher: '多选管理',
-    searchPlaceholder: '搜索对话历史...',
-    selected: '项已选',
-    refresh: '刷新',
-    moveTo: '移至项目',
-    batchDelete: '批量删除',
-    processing: '正在处理...',
-    deleting: '正在删除',
-    moving: '正在移动',
-    confirmDelete: '确定删除这 {n} 项对话吗？',
-    confirmMove: '确定将选中的 {n} 项移至“{p}”吗？',
-    noChats: '未发现对话记录',
-    noProjects: '未发现项目列表',
-    close: '关闭窗口'
-  },
-  en: {
-    launcher: 'History Manager',
-    searchPlaceholder: 'Search history...',
-    selected: 'selected',
-    refresh: 'Refresh',
-    moveTo: 'Move to Project',
-    batchDelete: 'Delete Selected',
-    processing: 'Processing...',
-    deleting: 'Deleting',
-    moving: 'Moving',
-    confirmDelete: 'Delete these {n} chats?',
-    confirmMove: 'Move {n} chats to "{p}"?',
-    noChats: 'No chats found',
-    noProjects: 'No projects found',
-    close: 'Close'
-  }
-};
-
+// 定义支持的平台配置
 const PLATFORM_CONFIG = {
   chatgpt: {
     name: 'ChatGPT',
+    enabled: true,
     linkSelector: 'a[data-sidebar-item="true"]',
     urlPattern: /^\/c\/[a-z0-9-]{10,}$/i, 
     menuBtnSelector: 'button[data-testid*="-options"]',
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
-    moveLabel: '移至项目', // ChatGPT 内部 UI 的中文标签
-    moveLabelEn: 'Move to project',
+    moveLabel: '移至项目',
     projectItemSelector: '[role="menuitem"]'
+  },
+  gemini: {
+    name: 'Gemini',
+    enabled: false, 
+    linkSelector: 'a[href*="/app/"]',
+    urlPattern: /^\/app\/[a-z0-9]{10,}$/i,
+    menuBtnSelector: 'button[aria-haspopup="true"]',
+    deleteBtnSelector: '[role="menuitem"], .delete-button',
+    confirmBtnSelector: 'button.delete-confirm, .confirm-button'
   }
 };
 
 /**
- * Robust Interaction Helpers
+ * 强力模拟点击
  */
-const getT = () => I18N[currentLang] || I18N.zh;
-
 const hardClick = (el) => {
   if (!el) return;
   const rect = el.getBoundingClientRect();
-  const opts = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+  const opts = { 
+    bubbles: true, 
+    cancelable: true, 
+    view: window, 
+    clientX: rect.left + rect.width / 2, 
+    clientY: rect.top + rect.height / 2 
+  };
   el.dispatchEvent(new PointerEvent('pointerdown', { ...opts, pointerType: 'mouse' }));
   el.dispatchEvent(new MouseEvent('mousedown', opts));
   el.focus();
@@ -78,16 +57,21 @@ const hardClick = (el) => {
   el.dispatchEvent(new MouseEvent('click', opts));
 };
 
+/**
+ * 精准等待元素出现
+ */
 const waitForElement = (selector, timeout = 3000, textMatch = null) => {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const check = () => {
       const els = document.querySelectorAll(selector);
-      let found = Array.from(els).find(el => {
-        if (!textMatch) return true;
-        const txt = el.innerText.trim().toLowerCase();
-        return txt.includes(textMatch.toLowerCase());
-      });
+      let found = null;
+      if (textMatch) {
+        found = Array.from(els).find(el => el.innerText.includes(textMatch));
+      } else {
+        found = els[0];
+      }
+      
       if (found && found.offsetParent !== null) resolve(found);
       else if (Date.now() - startTime > timeout) resolve(null);
       else setTimeout(check, 100);
@@ -96,16 +80,37 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
   });
 };
 
+/**
+ * 等待元素消失
+ */
+const waitForDisappear = (selector, timeout = 4000) => {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const check = () => {
+      const el = document.querySelector(selector);
+      if (!el || el.offsetParent === null) resolve(true);
+      else if (Date.now() - startTime > timeout) resolve(false);
+      else setTimeout(check, 200);
+    };
+    check();
+  });
+};
+
 const getPlatform = () => {
   const host = window.location.hostname;
   if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
+  if (host.includes('gemini.google.com')) return 'gemini';
   return null;
 };
 
+/**
+ * 扫描历史
+ */
 const scanHistory = () => {
   const platform = getPlatform();
-  if (!platform) return [];
+  if (!platform || !PLATFORM_CONFIG[platform]) return [];
   const config = PLATFORM_CONFIG[platform];
+  
   const links = Array.from(document.querySelectorAll(config.linkSelector));
   const results = [];
   const seenIds = new Set();
@@ -113,157 +118,310 @@ const scanHistory = () => {
   links.forEach((link) => {
     const href = link.getAttribute('href');
     if (!href) return;
+
     const path = href.split('?')[0];
     if (!config.urlPattern.test(path)) return;
+    
     if (href.includes('/new') || href === '/') return;
+    
     const rawId = path.split('/').pop();
     if (seenIds.has(rawId)) return;
     seenIds.add(rawId);
+
     const titleEl = link.querySelector('.truncate, span[dir="auto"]');
-    results.push({ id: `id-${rawId}`, title: titleEl ? titleEl.innerText : "Untitled Chat", url: href });
+    const title = titleEl ? titleEl.innerText : "Untitled Chat";
+
+    results.push({ id: `id-${rawId}`, title, url: href });
   });
   return results;
 };
 
 /**
- * Projects Logic
+ * 获取已有项目列表
  */
 const fetchProjects = async () => {
-  if (getPlatform() !== 'chatgpt') return;
-  const testItem = scannedItems[0];
-  if (!testItem) return;
-  const config = PLATFORM_CONFIG.chatgpt;
-  const link = document.querySelector(`${config.linkSelector}[href="${testItem.url}"]`);
+  if (selectedIds.size === 0) {
+    alert('请先选择至少一个对话以获取项目列表');
+    return;
+  }
+  
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const firstId = Array.from(selectedIds)[0];
+  const item = scannedItems.find(it => it.id === firstId);
+  if (!item) return;
+
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
   if (!link) return;
+
   const menuBtn = link.querySelector(config.menuBtnSelector);
   if (!menuBtn) return;
 
   hardClick(menuBtn);
-  // 兼容中英文
-  const moveBtn = await waitForElement(config.projectItemSelector, 1500, config.moveLabel) || 
-                  await waitForElement(config.projectItemSelector, 100, config.moveLabelEn);
-  
-  if (!moveBtn) {
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, config.moveLabel);
+  if (!moveMenuItem) {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return;
   }
-  hardClick(moveBtn);
-  await new Promise(r => setTimeout(r, 600));
-  
-  const items = document.querySelectorAll('[role="menu"] [role="menuitem"]');
+
+  hardClick(moveMenuItem);
+  await new Promise(r => setTimeout(r, 500));
+
+  const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
   const projects = [];
-  items.forEach(it => {
-    const text = it.innerText.trim();
-    if (text && !['新项目', '移至项目', 'New Project', 'Move to Project', 'Move to project'].includes(text)) {
-      projects.push(text);
+  subMenuItems.forEach(el => {
+    const title = el.querySelector('.truncate')?.innerText;
+    if (title && title !== '新项目') {
+      projects.push(title);
     }
   });
-  availableProjects = [...new Set(projects)];
-  renderProjectList();
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-};
 
-const renderProjectList = () => {
-  const list = document.getElementById('available-projects-list');
-  if (!list) return;
-  const t = getT();
-  if (availableProjects.length === 0) {
-    list.innerHTML = `<div class="project-option disabled">${t.noProjects}</div>`;
-  } else {
-    list.innerHTML = availableProjects.map(p => `<div class="project-option" data-name="${p}">${p}</div>`).join('');
-    list.querySelectorAll('.project-option').forEach(opt => {
-      opt.onclick = (e) => { e.stopPropagation(); runBatchMove(opt.dataset.name); };
-    });
-  }
+  availableProjects = [...new Set(projects)];
+  
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await new Promise(r => setTimeout(r, 200));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  renderProjectDropdown();
 };
 
 /**
- * UI Rendering
+ * 自动化单次操作
  */
+const deleteOne = async (item, config) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return false;
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return false;
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  hardClick(menuBtn);
+  const deleteBtn = await waitForElement(config.deleteBtnSelector);
+  if (!deleteBtn) return false;
+  hardClick(deleteBtn);
+  const confirmBtn = await waitForElement(config.confirmBtnSelector);
+  if (!confirmBtn) return false;
+  hardClick(confirmBtn);
+  const isGone = await waitForDisappear(config.confirmBtnSelector);
+  if (!isGone) return false;
+  await new Promise(r => setTimeout(r, 1200));
+  return true;
+};
+
+const moveOne = async (item, projectName, config) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return false;
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return false;
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  hardClick(menuBtn);
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  if (!moveMenuItem) return false;
+  hardClick(moveMenuItem);
+  const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
+  if (!targetProject) return false;
+  hardClick(targetProject);
+  await new Promise(r => setTimeout(r, 1500));
+  return true;
+};
+
+/**
+ * 更新处理进度文本
+ */
+const updateProgress = (current, total) => {
+  const el = document.getElementById('processing-progress-text');
+  if (el) el.innerText = `正在处理第 ${current} / ${total} 项...`;
+};
+
+const runBatchDelete = async () => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定要执行删除吗？共 ${ids.length} 项。`)) return;
+
+  isProcessing = true;
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  overlay.classList.add('processing');
+
+  const total = ids.length;
+  let currentCount = 0;
+
+  for (const id of ids) {
+    currentCount++;
+    updateProgress(currentCount, total);
+    const item = scannedItems.find(it => it.id === id);
+    if (item) {
+      const success = await deleteOne(item, config);
+      if (success) {
+        selectedIds.delete(id);
+        scannedItems = scannedItems.filter(it => it.id !== id);
+        renderDashboard();
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+
+  isProcessing = false;
+  overlay.classList.remove('processing');
+  alert('操作结束');
+};
+
+const runBatchMove = async (projectName) => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定将选中的 ${ids.length} 项对话移至项目“${projectName}”吗？`)) return;
+
+  isProcessing = true;
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  overlay.classList.add('processing');
+
+  const total = ids.length;
+  let currentCount = 0;
+
+  for (const id of ids) {
+    currentCount++;
+    updateProgress(currentCount, total);
+    const item = scannedItems.find(it => it.id === id);
+    if (item) {
+      const success = await moveOne(item, projectName, config);
+      if (success) {
+        selectedIds.delete(id);
+        scannedItems = scannedItems.filter(it => it.id !== id);
+        renderDashboard();
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+
+  isProcessing = false;
+  overlay.classList.remove('processing');
+  alert('迁移操作结束');
+};
+
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
-  const t = getT();
+  
   const filteredItems = scannedItems.filter(item => 
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  container.innerHTML = filteredItems.length === 0 
-    ? `<div class="empty-state"><h3>${t.noChats}</h3></div>`
-    : filteredItems.map(item => `
+  if (scannedItems.length === 0) {
+    container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3><p>请确保侧边栏已展开且包含历史记录</p></div>`;
+  } else if (filteredItems.length === 0) {
+    container.innerHTML = `<div class="empty-state"><h3>未找到匹配结果</h3><p>尝试搜索其他关键词</p></div>`;
+  } else {
+    container.innerHTML = filteredItems.map(item => `
       <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
         <div class="card-title">${item.title}</div>
         <div class="card-checkbox"></div>
       </div>
     `).join('');
+  }
   
   container.querySelectorAll('.chat-card').forEach(card => {
     card.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       if (isProcessing) return;
+      
       const id = card.dataset.id;
       const isShift = e.shiftKey;
-      const currentVisibleIds = filteredItems.map(it => it.id);
+
+      const currentIds = filteredItems.map(it => it.id);
+      
       if (isShift && pivotId) {
-        const startIdx = currentVisibleIds.indexOf(pivotId);
-        const endIdx = currentVisibleIds.indexOf(id);
-        if (startIdx !== -1 && endIdx !== -1) {
-          const [min, max] = [Math.min(startIdx, endIdx), Math.max(startIdx, endIdx)];
-          const range = currentVisibleIds.slice(min, max + 1);
-          range.forEach(rid => pivotStatus ? selectedIds.add(rid) : selectedIds.delete(rid));
+        // Shift 范围选择逻辑：基于锚点和当前基准选择状态
+        const startIndex = currentIds.indexOf(pivotId);
+        const endIndex = currentIds.indexOf(id);
+        
+        if (startIndex !== -1 && endIndex !== -1) {
+          const [min, max] = [Math.min(startIndex, endIndex), Math.max(startIndex, endIndex)];
+          const rangeIds = currentIds.slice(min, max + 1);
+          
+          // 决定是增加还是减少：取决于 pivotId 在点击那一刻的状态
+          const shouldSelect = baseSelection.has(pivotId);
+          
+          // 从基准状态开始重新计算当前所有选择
+          const newSelection = new Set(baseSelection);
+          rangeIds.forEach(rid => {
+            if (shouldSelect) newSelection.add(rid);
+            else newSelection.delete(rid);
+          });
+          
+          selectedIds = newSelection;
         }
       } else {
-        if (selectedIds.has(id)) { selectedIds.delete(id); pivotStatus = false; }
-        else { selectedIds.add(id); pivotStatus = true; }
+        // 普通点击：切换状态并更新锚点
+        if (selectedIds.has(id)) {
+          selectedIds.delete(id);
+        } else {
+          selectedIds.add(id);
+        }
+        // 更新锚点和基准状态，确保下一次 Shift 操作基于此点击
         pivotId = id;
+        baseSelection = new Set(selectedIds);
       }
+
       renderDashboard(); 
       updateFooter();
     };
   });
 };
 
+const renderProjectDropdown = () => {
+  const list = document.getElementById('available-projects-list');
+  if (!list) return;
+  if (availableProjects.length === 0) {
+    list.innerHTML = `<div class="project-option-item disabled">无可用项目 (点击刷新)</div>`;
+  } else {
+    list.innerHTML = availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('');
+  }
+  list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
+    item.onclick = () => {
+      const projectName = item.dataset.name;
+      runBatchMove(projectName);
+      document.getElementById('project-dropdown').classList.remove('open');
+    };
+  });
+};
+
 const updateFooter = () => {
-  const t = getT();
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
   const moveBtn = document.getElementById('dash-move-trigger');
-  if (lbl) lbl.innerText = `${selectedIds.size} ${t.selected}`;
+  if (lbl) lbl.innerText = `${selectedIds.size} 项已选`;
   if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
   if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
 };
 
-const syncLangUI = () => {
-  const t = getT();
-  const launcher = document.getElementById('history-manager-launcher');
-  if (launcher) launcher.innerHTML = `<span>☑</span> ${t.launcher}`;
-  const input = document.getElementById('dash-search-input');
-  if (input) input.placeholder = t.searchPlaceholder;
-  const refresh = document.getElementById('dash-refresh-btn');
-  if (refresh) refresh.innerText = t.refresh;
-  const move = document.getElementById('dash-move-trigger');
-  if (move) move.innerText = `${t.moveTo} ▾`;
-  const del = document.getElementById('dash-delete-btn');
-  if (del) del.innerText = t.batchDelete;
-  const close = document.getElementById('close-dash-btn');
-  if (close) close.title = t.close;
-  renderDashboard();
-  updateFooter();
-};
-
 const toggleDashboard = () => {
+  const platform = getPlatform();
+  if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
   let overlay = document.getElementById('history-manager-overlay');
-  if (!overlay) { initOverlay(); overlay = document.getElementById('history-manager-overlay'); }
+  if (!overlay) {
+    initOverlay();
+    overlay = document.getElementById('history-manager-overlay');
+  }
   isDashboardOpen = !isDashboardOpen;
   if (isDashboardOpen) {
     overlay.style.setProperty('display', 'flex', 'important');
     scannedItems = scanHistory();
     selectedIds.clear();
-    pivotId = null;
+    baseSelection.clear();
+    availableProjects = [];
     searchQuery = '';
-    const input = document.getElementById('dash-search-input');
-    if (input) input.value = '';
-    syncLangUI();
-    if (availableProjects.length === 0) fetchProjects();
+    pivotId = null;
+    const searchInput = document.getElementById('dash-search-input');
+    if (searchInput) searchInput.value = '';
+    renderDashboard();
+    updateFooter();
   } else {
     overlay.style.display = 'none';
   }
@@ -276,151 +434,70 @@ const initOverlay = () => {
   overlay.innerHTML = `
     <div class="dashboard-window">
       <div class="dashboard-header">
-        <div class="search-box">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="dash-search-input" />
+        <div class="header-info">
+          <h2>多选管理对话</h2>
+          <p>支持 Shift 连选（含反选/范围缩减）</p>
         </div>
-        <div class="header-right">
-           <button id="close-dash-btn" class="icon-btn">✕</button>
+        <button id="close-dash-btn">✕</button>
+      </div>
+      <div class="dashboard-search-container">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="dash-search-input" placeholder="模糊搜索历史记录..." />
         </div>
       </div>
       <div id="dashboard-items-grid" class="dashboard-body"></div>
       <div class="dashboard-footer">
-        <div class="footer-left"><span id="selected-count-label"></span></div>
+        <span id="selected-count-label">0 项已选</span>
         <div class="footer-actions">
-          <button id="dash-refresh-btn" class="btn-secondary"></button>
+          <button id="dash-refresh-btn" class="btn-secondary">刷新列表</button>
           <div id="project-dropdown" class="dropdown-wrapper">
-             <button id="dash-move-trigger" class="btn-secondary" disabled></button>
-             <div id="available-projects-list" class="dropdown-content"></div>
+             <button id="dash-move-trigger" class="btn-secondary" disabled>移至项目 ▾</button>
+             <div id="available-projects-list" class="dropdown-content">
+                <div class="project-option-item disabled">点击获取项目列表</div>
+             </div>
           </div>
-          <button id="dash-delete-btn" class="btn-primary danger" disabled></button>
+          <button id="dash-delete-btn" class="btn-primary danger" disabled>执行删除</button>
         </div>
       </div>
       <div id="processing-mask">
-         <div class="processing-card"><div class="spinner"></div><span id="processing-progress-text"></span></div>
+         <div class="processing-card">
+            <div class="spinner"></div>
+            <span id="processing-main-text">正在执行自动化操作...</span>
+            <span id="processing-progress-text" style="font-size: 12px; opacity: 0.6; margin-top: -8px;"></span>
+         </div>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
-  document.getElementById('close-dash-btn').onclick = toggleDashboard;
+  document.getElementById('close-dash-btn').onclick = () => toggleDashboard();
   document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
-  document.getElementById('dash-search-input').oninput = (e) => { searchQuery = e.target.value; renderDashboard(); };
-  document.getElementById('dash-delete-btn').onclick = runBatchDelete;
+  const searchInput = document.getElementById('dash-search-input');
+  searchInput.oninput = (e) => { searchQuery = e.target.value; renderDashboard(); };
   const moveTrigger = document.getElementById('dash-move-trigger');
   const dropdown = document.getElementById('project-dropdown');
-  moveTrigger.onclick = (e) => { 
-    e.stopPropagation(); 
-    dropdown.classList.toggle('open'); 
-  };
+  moveTrigger.onclick = (e) => { e.stopPropagation(); dropdown.classList.toggle('open'); if (availableProjects.length === 0) fetchProjects(); };
   window.addEventListener('click', () => dropdown.classList.remove('open'));
-};
-
-/**
- * Automations
- */
-const runBatchDelete = async () => {
-  const t = getT();
-  const ids = Array.from(selectedIds);
-  if (!confirm(t.confirmDelete.replace('{n}', ids.length))) return;
-  isProcessing = true;
-  document.getElementById('history-manager-overlay').classList.add('processing');
-  const config = PLATFORM_CONFIG.chatgpt;
-  for (let i = 0; i < ids.length; i++) {
-    document.getElementById('processing-progress-text').innerText = `${t.deleting}: ${i + 1} / ${ids.length}`;
-    const item = scannedItems.find(it => it.id === ids[i]);
-    if (item) await deleteOne(item, config);
-    selectedIds.delete(ids[i]);
-    scannedItems = scannedItems.filter(it => it.id !== ids[i]);
-    renderDashboard();
-    updateFooter();
-  }
-  isProcessing = false;
-  document.getElementById('history-manager-overlay').classList.remove('processing');
-};
-
-const deleteOne = async (item, config) => {
-  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
-  if (!link) return;
-  link.scrollIntoView({ block: 'center' });
-  await new Promise(r => setTimeout(r, 400));
-  const menuBtn = link.querySelector(config.menuBtnSelector);
-  if (!menuBtn) return;
-  hardClick(menuBtn);
-  const del = await waitForElement(config.deleteBtnSelector);
-  if (del) {
-    hardClick(del);
-    const confirm = await waitForElement(config.confirmBtnSelector);
-    if (confirm) hardClick(confirm);
-    await new Promise(r => setTimeout(r, 1200));
-  }
-};
-
-const runBatchMove = async (projectName) => {
-  const t = getT();
-  const ids = Array.from(selectedIds);
-  if (!confirm(t.confirmMove.replace('{n}', ids.length).replace('{p}', projectName))) return;
-  isProcessing = true;
-  document.getElementById('history-manager-overlay').classList.add('processing');
-  document.getElementById('project-dropdown').classList.remove('open');
-  const config = PLATFORM_CONFIG.chatgpt;
-  for (let i = 0; i < ids.length; i++) {
-    document.getElementById('processing-progress-text').innerText = `${t.moving}: ${i + 1} / ${ids.length}`;
-    const item = scannedItems.find(it => it.id === ids[i]);
-    if (item) await moveOne(item, projectName, config);
-    selectedIds.delete(ids[i]);
-    renderDashboard();
-    updateFooter();
-  }
-  isProcessing = false;
-  document.getElementById('history-manager-overlay').classList.remove('processing');
-};
-
-const moveOne = async (item, projectName, config) => {
-  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
-  if (!link) return;
-  link.scrollIntoView({ block: 'center' });
-  await new Promise(r => setTimeout(r, 400));
-  const menuBtn = link.querySelector(config.menuBtnSelector);
-  if (!menuBtn) return;
-  hardClick(menuBtn);
-  // 兼容中英文
-  const moveBtn = await waitForElement(config.projectItemSelector, 1500, config.moveLabel) || 
-                  await waitForElement(config.projectItemSelector, 100, config.moveLabelEn);
-  if (moveBtn) {
-    hardClick(moveBtn);
-    const target = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
-    if (target) hardClick(target);
-    await new Promise(r => setTimeout(r, 1500));
-  }
+  document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 };
 
 const injectLauncher = () => {
+  const platform = getPlatform();
+  if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
   if (document.getElementById('history-manager-launcher')) return;
   const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
   if (!sidebar) return;
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
+  btn.innerHTML = `<span>☑</span> 多选`;
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
-  sidebar.prepend(btn);
-  syncLangUI();
+  sidebar.appendChild(btn);
 };
-
-/**
- * Storage & Initialization
- */
-if (typeof chrome !== 'undefined' && chrome.storage) {
-  chrome.storage.local.get(['lang'], (res) => {
-    if (res.lang) currentLang = res.lang;
-    syncLangUI();
-  });
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.lang) {
-      currentLang = changes.lang.newValue;
-      syncLangUI();
-    }
-  });
-}
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
-setTimeout(injectLauncher, 1000);
+setTimeout(() => { injectLauncher(); initOverlay(); }, 2000);
+
+const style = document.createElement('style');
+style.textContent = `.processing #processing-mask { display: flex !important; }`;
+document.head.appendChild(style);

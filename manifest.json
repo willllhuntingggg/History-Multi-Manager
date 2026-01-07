@@ -2,18 +2,22 @@
 {
   "manifest_version": 3,
   "name": "Chat History Multi-Manager",
-  "version": "1.0.1",
-  "description": "Batch manage ChatGPT and Gemini chat history with drag-to-select.",
+  "version": "1.0.0",
+  "description": "Batch manage ChatGPT chat history with Gmail-style selection and project organization.",
   "permissions": ["storage", "activeTab"],
   "action": {
     "default_popup": "index.html"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
   },
   "content_scripts": [
     {
       "matches": [
         "https://chatgpt.com/*",
-        "https://chat.openai.com/*",
-        "https://gemini.google.com/*"
+        "https://chat.openai.com/*"
       ],
       "js": ["content_script.js"],
       "css": ["content_style.css"]
@@ -21,7 +25,6 @@
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
-    "https://chat.openai.com/*",
-    "https://gemini.google.com/*"
+    "https://chat.openai.com/*"
   ]
 }

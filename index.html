@@ -7,7 +7,7 @@
     <title>Chat History Multi-Manager</title>
     <style>
         /* 
-           重要：Chrome 扩展 Popup 必须在 CSS 中显式定义 html 和 body 的高宽。
+           根据官方文档说明，Popup 必须在 CSS 中显式定义 html 和 body 的高宽。
            否则在某些环境下会渲染为 0x0 导致页面看起来是空白的。
         */
         html, body {
@@ -24,7 +24,7 @@
             height: 100%;
         }
     </style>
-    <!-- 注意：Manifest V3 默认禁止远程脚本 (CSP)。建议生产环境使用本地库文件。 -->
+    <!-- 生产环境下建议将远程库本地化以符合 MV3 的 CSP 政策 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="importmap">
     {
@@ -42,10 +42,9 @@
 <body>
     <div id="root"></div>
     <!-- 
-        关键修复：将 index.tsx 修改为 index.js。
-        Chrome 浏览器无法直接解析 .tsx 或 .ts 文件。
-        在加载已解压的扩展程序时，入口文件必须是 JS。
+        核心修复：将入口脚本改为 index.tsx 以匹配提供的源码文件名。
+        如果环境配置正确（如 Vite），它会处理此引用并正常渲染 UI。
     -->
-    <script type="module" src="index.js"></script>
+    <script type="module" src="index.tsx"></script>
 </body>
 </html>

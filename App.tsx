@@ -8,12 +8,22 @@ const App: React.FC = () => {
   const [lang, setLang] = useState<'zh' | 'en'>('zh');
 
   useEffect(() => {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
-        setCurrentTab(tabs[0] || null);
-      });
+    // 确保在扩展环境下正确获取当前标签页
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      try {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
+          if (tabs && tabs.length > 0) {
+            setCurrentTab(tabs[0]);
+          }
+        });
+      } catch (err) {
+        console.error("Tab query failed:", err);
+      }
+    }
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get(['lang'], (result: any) => {
-        if (result.lang) setLang(result.lang);
+        if (result && result.lang) setLang(result.lang);
       });
     }
   }, []);
@@ -21,7 +31,7 @@ const App: React.FC = () => {
   const toggleLang = () => {
     const newLang = lang === 'zh' ? 'en' : 'zh';
     setLang(newLang);
-    if (typeof chrome !== 'undefined' && chrome.storage) {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ lang: newLang });
     }
   };
@@ -55,11 +65,11 @@ const App: React.FC = () => {
   }[lang];
 
   return (
-    <div className="flex flex-col h-full font-sans text-slate-800 select-none">
+    <div className="flex flex-col h-full font-sans text-slate-800 select-none bg-white">
       <header className="px-5 py-4 bg-indigo-600 text-white flex items-center justify-between shadow-md">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-white rounded flex items-center justify-center overflow-hidden">
-             <img src="icon.svg" className="w-full h-full p-1" alt="Logo" />
+             <img src="icons/icon128.png" className="w-full h-full p-1" alt="Logo" />
           </div>
           <h1 className="text-base font-bold tracking-tight">{t.title}</h1>
         </div>
@@ -109,7 +119,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-center items-center">
-        <span className="text-[10px] text-slate-400 font-medium tracking-wide">VERSION 1.0.0</span>
+        <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">VERSION 1.0.0</span>
       </footer>
     </div>
   );

@@ -7,8 +7,8 @@
     <title>Chat History Multi-Manager</title>
     <style>
         /* 
-           根据官方文档说明，Popup 必须在 CSS 中显式定义 html 和 body 的高宽。
-           否则在某些环境下会渲染为 0x0 导致页面看起来是空白的。
+           Crucial: Chrome Extension popups require explicit dimensions in CSS.
+           Without these, the popup may render as 0x0 (blank).
         */
         html, body {
             width: 350px;
@@ -24,27 +24,26 @@
             height: 100%;
         }
     </style>
-    <!-- 生产环境下建议将远程库本地化以符合 MV3 的 CSP 政策 -->
+    <!-- Tailwind via CDN is useful for sandbox preview but will be bundled in a real build -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@^19.2.3",
-        "react/": "https://esm.sh/react@^19.2.3/",
-        "react-dom": "https://esm.sh/react-dom@^19.2.3",
-        "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
-        "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
-        "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
-      }
-    }
-    </script>
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.0.0",
+    "react-dom": "https://esm.sh/react-dom@19.0.0",
+    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
+  }
+}
+</script>
 </head>
 <body>
     <div id="root"></div>
-    <!-- 
-        核心修复：将入口脚本改为 index.tsx 以匹配提供的源码文件名。
-        如果环境配置正确（如 Vite），它会处理此引用并正常渲染 UI。
-    -->
-    <script type="module" src="index.tsx"></script>
+    <!-- Point to the .tsx file; Vite handles the transformation to .js during build -->
+    <script type="module" src="/index.tsx"></script>
 </body>
 </html>

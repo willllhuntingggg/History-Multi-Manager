@@ -1,4 +1,3 @@
-
 {
   "manifest_version": 3,
   "name": "Chat History Multi-Manager",
@@ -31,7 +30,7 @@
         "https://gemini.google.com/*"
       ],
       "js": [
-        "content_script.js"
+        "content_bundle.js"
       ],
       "css": [
         "content_style.css"

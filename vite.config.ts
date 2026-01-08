@@ -9,17 +9,14 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
-      // 定义多个入口点
       input: {
         popup: resolve(__dirname, 'index.html'),
         content_script: resolve(__dirname, 'content_script.tsx'),
       },
       output: {
-        // 自定义输出文件名结构
-        // 关键点：Content Script 不能带 hash，否则 manifest.json 无法预测文件名
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'content_script') {
-            return 'content_script.js';
+            return 'content_bundle.js'; // Renamed to avoid conflict with public/content_script.js
           }
           return 'assets/[name]-[hash].js';
         },

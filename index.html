@@ -6,10 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat History Multi-Manager</title>
     <style>
-        /* 关键：必须显式给 html/body 宽高，否则 Popup 渲染为 0x0 */
+        /* 关键：必须显式给 html/body 宽高，否则 Popup 渲染为 0x0 或空白 */
         html, body {
-            width: 360px;
-            height: 520px;
+            width: 350px;
+            height: 550px;
             margin: 0;
             padding: 0;
             overflow: hidden;
@@ -37,7 +37,6 @@
 </head>
 <body>
     <div id="root"></div>
-    <!-- 在 Chrome 扩展中，通常需要将 TSX 编译为 JS 才能直接运行。此处保持与逻辑文件名一致 -->
     <script type="module" src="index.tsx"></script>
 </body>
 </html>

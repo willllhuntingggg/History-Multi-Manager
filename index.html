@@ -6,7 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat History Multi-Manager</title>
     <style>
-        /* 关键：必须显式给 html/body 宽高，否则 Popup 渲染为 0x0 或空白 */
+        /* 
+           重要：Chrome 扩展 Popup 必须在 CSS 中显式定义 html 和 body 的高宽。
+           否则在某些环境下会渲染为 0x0 导致页面看起来是空白的。
+        */
         html, body {
             width: 350px;
             height: 550px;
@@ -21,22 +24,28 @@
             height: 100%;
         }
     </style>
+    <!-- 注意：Manifest V3 默认禁止远程脚本 (CSP)。建议生产环境使用本地库文件。 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react-dom": "https://esm.sh/react-dom@^19.2.3",
-    "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
-    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
-  }
-}
-</script>
+    {
+      "imports": {
+        "react": "https://esm.sh/react@^19.2.3",
+        "react/": "https://esm.sh/react@^19.2.3/",
+        "react-dom": "https://esm.sh/react-dom@^19.2.3",
+        "react-dom/client": "https://esm.sh/react-dom@^19.2.3/client",
+        "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+        "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
+      }
+    }
+    </script>
 </head>
 <body>
     <div id="root"></div>
-    <script type="module" src="index.tsx"></script>
+    <!-- 
+        关键修复：将 index.tsx 修改为 index.js。
+        Chrome 浏览器无法直接解析 .tsx 或 .ts 文件。
+        在加载已解压的扩展程序时，入口文件必须是 JS。
+    -->
+    <script type="module" src="index.js"></script>
 </body>
 </html>

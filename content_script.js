@@ -3,10 +3,11 @@
  * Global State
  */
 let isDashboardOpen = false;
+let isTOCSidebarOpen = false; // New state for TOC
 let scannedItems = []; 
 let selectedIds = new Set();
-let baseSelection = new Set(); // 记录 Shift 操作开始前的选择状态
-let pivotId = null; // Shift 操作的基准点（锚点）
+let baseSelection = new Set(); 
+let pivotId = null; 
 let availableProjects = []; 
 let isProcessing = false;
 let searchQuery = ''; 
@@ -34,6 +35,93 @@ const PLATFORM_CONFIG = {
     deleteBtnSelector: '[role="menuitem"], .delete-button',
     confirmBtnSelector: 'button.delete-confirm, .confirm-button'
   }
+};
+
+/**
+ * TOC 功能逻辑
+ */
+const initTOC = () => {
+  if (document.getElementById('chat-toc-panel')) return;
+  const panel = document.createElement('div');
+  panel.id = 'chat-toc-panel';
+  panel.innerHTML = `
+    <div class="toc-header">
+      <span class="toc-header-title">会话目录</span>
+      <button id="close-toc-btn">✕</button>
+    </div>
+    <div id="toc-content-list" class="toc-list"></div>
+    <div class="toc-footer">
+      <button id="refresh-toc-btn">更新目录</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+  document.getElementById('close-toc-btn').onclick = toggleTOC;
+  document.getElementById('refresh-toc-btn').onclick = refreshTOC;
+};
+
+const toggleTOC = () => {
+  const panel = document.getElementById('chat-toc-panel');
+  if (!panel) {
+    initTOC();
+    return toggleTOC();
+  }
+  isTOCSidebarOpen = !isTOCSidebarOpen;
+  if (isTOCSidebarOpen) {
+    panel.classList.add('open');
+    refreshTOC();
+  } else {
+    panel.classList.remove('open');
+  }
+};
+
+const refreshTOC = () => {
+  const list = document.getElementById('toc-content-list');
+  if (!list) return;
+  
+  // 查找所有用户发送的消息
+  const userMessages = document.querySelectorAll('div[data-message-author-role="user"]');
+  if (userMessages.length === 0) {
+    list.innerHTML = '<div class="toc-empty">未发现用户侧消息</div>';
+    return;
+  }
+
+  list.innerHTML = Array.from(userMessages).map((msg, idx) => {
+    // 提取文本，优先找 whitespace-pre-wrap
+    const textEl = msg.querySelector('.whitespace-pre-wrap') || msg;
+    const text = textEl.innerText.trim().replace(/\n/g, ' ');
+    return `
+      <div class="toc-item" data-idx="${idx}" title="${text}">
+        <div class="toc-item-inner">
+          <span class="toc-num">${idx + 1}</span>
+          <span class="toc-text">${text}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 绑定滚动跳转事件
+  list.querySelectorAll('.toc-item').forEach(item => {
+    item.onclick = () => {
+      const idx = item.dataset.idx;
+      const targetMsg = userMessages[idx];
+      targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      
+      // 添加一个短暂的高亮反馈
+      const originalBg = targetMsg.style.background;
+      targetMsg.style.transition = 'background 0.5s ease';
+      targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
+      setTimeout(() => targetMsg.style.background = originalBg, 1500);
+    };
+  });
+};
+
+const injectTOCLauncher = () => {
+  if (document.getElementById('chat-toc-launcher')) return;
+  const btn = document.createElement('button');
+  btn.id = 'chat-toc-launcher';
+  btn.innerHTML = `目录`;
+  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleTOC(); };
+  document.body.appendChild(btn);
 };
 
 /**
@@ -492,11 +580,14 @@ const injectLauncher = () => {
   btn.innerHTML = `<span>☑</span> 多选`;
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   sidebar.appendChild(btn);
+  
+  // 注入目录呼出入口
+  injectTOCLauncher();
 };
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
-setTimeout(() => { injectLauncher(); initOverlay(); }, 2000);
+setTimeout(() => { injectLauncher(); initOverlay(); initTOC(); }, 2000);
 
 const style = document.createElement('style');
 style.textContent = `.processing #processing-mask { display: flex !important; }`;

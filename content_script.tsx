@@ -1,350 +1,673 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
-
 /**
- * Types & Interfaces
+ * Global State and Interfaces
  */
 interface HistoryItem {
   id: string;
-  element: HTMLElement;
   title: string;
+  url: string;
 }
 
-/**
- * Global State
- */
-let isMultiSelectActive = false;
-let selectedItems = new Map<string, HistoryItem>();
-let isDragging = false;
-let startX = 0;
-let startY = 0;
-let dragBox: HTMLDivElement | null = null;
-let toolbarContainer: HTMLDivElement | null = null;
+interface MessageTOCItem {
+  index: number;
+  text: string;
+  element: HTMLElement;
+}
 
-/**
- * Selectors for different platforms
- */
-const SELECTORS = {
+interface PlatformConfig {
+  name: string;
+  enabled: boolean;
+  linkSelector: string;
+  urlPattern: RegExp;
+  menuBtnSelector: string;
+  deleteBtnSelector: string;
+  confirmBtnSelector: string;
+  moveLabel?: string;
+  projectItemSelector?: string;
+  chatContainerSelector: string;
+  userMessageSelector: string;
+}
+
+let isDashboardOpen = false;
+let isTOCSelectionOpen = false;
+let scannedItems: HistoryItem[] = []; 
+let selectedIds = new Set<string>();
+let baseSelection = new Set<string>();
+let pivotId: string | null = null;
+let availableProjects: string[] = []; 
+let isProcessing = false;
+let searchQuery = ''; 
+
+// 定义支持的平台配置
+const PLATFORM_CONFIG: Record<string, PlatformConfig> = {
   chatgpt: {
-    item: 'li[data-testid^="history-item-"]',
-    title: '.truncate',
-    container: 'nav',
-    menuButton: '[id^="radix-"]', // This is usually the ... button
-    deleteButton: 'div[role="menuitem"]', // This is found in the popup menu
+    name: 'ChatGPT',
+    enabled: true,
+    linkSelector: 'a[data-sidebar-item="true"]',
+    urlPattern: /^\/c\/[a-z0-9-]{10,}$/i, 
+    menuBtnSelector: 'button[data-testid*="-options"]',
+    deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
+    confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
+    moveLabel: '移至项目',
+    projectItemSelector: '[role="menuitem"]',
+    chatContainerSelector: 'main div.flex-1.overflow-hidden div.react-scroll-to-bottom--wrapper',
+    userMessageSelector: '[data-testid^="conversation-turn-"] [data-message-author-role="user"]'
   },
   gemini: {
-    item: 'div[role="listitem"]',
-    title: '.conversation-title',
-    container: 'nav',
-    menuButton: 'button[aria-haspopup="true"]',
-    deleteButton: 'li[role="menuitem"]'
+    name: 'Gemini',
+    enabled: false, 
+    linkSelector: 'a[href*="/app/"]',
+    urlPattern: /^\/app\/[a-z0-9]{10,}$/i,
+    menuBtnSelector: 'button[aria-haspopup="true"]',
+    deleteBtnSelector: '[role="menuitem"], .delete-button',
+    confirmBtnSelector: 'button.delete-confirm, .confirm-button',
+    chatContainerSelector: '.chat-history',
+    userMessageSelector: '.user-query'
   }
 };
 
 /**
- * Platform Detection
+ * 强力模拟点击
  */
+const hardClick = (el: HTMLElement) => {
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const opts = { 
+    bubbles: true, 
+    cancelable: true, 
+    view: window, 
+    clientX: rect.left + rect.width / 2, 
+    clientY: rect.top + rect.height / 2 
+  };
+  el.dispatchEvent(new PointerEvent('pointerdown', { ...opts, pointerType: 'mouse' }));
+  el.dispatchEvent(new MouseEvent('mousedown', opts));
+  el.focus();
+  el.dispatchEvent(new PointerEvent('pointerup', { ...opts, pointerType: 'mouse' }));
+  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  el.dispatchEvent(new MouseEvent('click', opts));
+};
+
+/**
+ * 精准等待元素出现
+ */
+const waitForElement = (selector: string, timeout = 3000, textMatch: string | null = null): Promise<HTMLElement | null> => {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const check = () => {
+      const els = document.querySelectorAll(selector);
+      let found: Element | undefined = undefined;
+      if (textMatch) {
+        found = Array.from(els).find(el => (el as HTMLElement).innerText.includes(textMatch));
+      } else {
+        found = els[0];
+      }
+      
+      if (found && (found as HTMLElement).offsetParent !== null) resolve(found as HTMLElement);
+      else if (Date.now() - startTime > timeout) resolve(null);
+      else setTimeout(check, 100);
+    };
+    check();
+  });
+};
+
+/**
+ * 等待元素消失
+ */
+const waitForDisappear = (selector: string, timeout = 4000) => {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const check = () => {
+      const el = document.querySelector(selector);
+      if (!el || (el as HTMLElement).offsetParent === null) resolve(true);
+      else if (Date.now() - startTime > timeout) resolve(false);
+      else setTimeout(check, 200);
+    };
+    check();
+  });
+};
+
 const getPlatform = () => {
   const host = window.location.hostname;
-  if (host.includes('chat.openai.com') || host.includes('chatgpt.com')) return 'chatgpt';
+  if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
   if (host.includes('gemini.google.com')) return 'gemini';
   return null;
 };
 
 /**
- * Logic to toggle multi-select mode
+ * 扫描会话中的用户消息以生成目录
  */
-const toggleMultiSelectMode = () => {
-  isMultiSelectActive = !isMultiSelectActive;
+const scanUserMessages = (): MessageTOCItem[] => {
+  const platform = getPlatform();
+  if (!platform) return [];
+  const config = PLATFORM_CONFIG[platform];
   
-  if (!isMultiSelectActive) {
-    clearSelection();
-    removeToolbar();
-    document.body.style.cursor = 'default';
-  } else {
-    injectToolbar();
-    document.body.style.cursor = 'crosshair';
+  const userMessages = document.querySelectorAll(config.userMessageSelector);
+  const items: MessageTOCItem[] = [];
+  
+  userMessages.forEach((msg, idx) => {
+    const text = (msg as HTMLElement).innerText.trim().replace(/\n/g, ' ');
+    if (text) {
+      items.push({
+        index: idx + 1,
+        text: text,
+        element: msg as HTMLElement
+      });
+    }
+  });
+  
+  return items;
+};
+
+/**
+ * 渲染目录列表
+ */
+const renderTOCItems = () => {
+  const container = document.getElementById('chat-toc-list');
+  if (!container) return;
+  
+  const items = scanUserMessages();
+  if (items.length === 0) {
+    container.innerHTML = `<div class="toc-empty">暂无用户消息</div>`;
+    return;
   }
-
-  updateSelectionUI();
+  
+  container.innerHTML = items.map(item => `
+    <div class="toc-item" data-idx="${item.index}">
+      <span class="toc-idx">${item.index}</span>
+      <span class="toc-text" title="${item.text}">${item.text}</span>
+    </div>
+  `).join('');
+  
+  container.querySelectorAll('.toc-item').forEach(el => {
+    (el as HTMLElement).onclick = () => {
+      const idx = parseInt((el as HTMLElement).dataset.idx || '0');
+      const item = items.find(it => it.index === idx);
+      if (item) {
+        item.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // 高亮一下
+        item.element.classList.add('toc-highlight-flash');
+        setTimeout(() => item.element.classList.remove('toc-highlight-flash'), 2000);
+      }
+    };
+  });
 };
 
-const clearSelection = () => {
-  selectedItems.clear();
-  updateSelectionUI();
+/**
+ * 扫描历史
+ */
+const scanHistory = (): HistoryItem[] => {
+  const platform = getPlatform();
+  if (!platform || !PLATFORM_CONFIG[platform]) return [];
+  const config = PLATFORM_CONFIG[platform];
+  
+  const links = Array.from(document.querySelectorAll(config.linkSelector));
+  const results: HistoryItem[] = [];
+  const seenIds = new Set();
+
+  links.forEach((link) => {
+    const href = link.getAttribute('href');
+    if (!href) return;
+
+    const path = href.split('?')[0];
+    if (!config.urlPattern.test(path)) return;
+    
+    if (href.includes('/new') || href === '/') return;
+    
+    const rawId = path.split('/').pop();
+    if (seenIds.has(rawId)) return;
+    seenIds.add(rawId);
+
+    const titleEl = link.querySelector('.truncate, span[dir="auto"]');
+    const title = titleEl ? (titleEl as HTMLElement).innerText : "Untitled Chat";
+
+    results.push({ id: `id-${rawId}`, title, url: href });
+  });
+  return results;
 };
 
-const updateSelectionUI = () => {
+/**
+ * 获取已有项目列表
+ */
+const fetchProjects = async () => {
+  if (selectedIds.size === 0) {
+    alert('请先选择至少一个对话以获取项目列表');
+    return;
+  }
+  
   const platform = getPlatform();
   if (!platform) return;
+  const config = PLATFORM_CONFIG[platform];
+  const firstId = Array.from(selectedIds)[0];
+  const item = scannedItems.find(it => it.id === firstId);
+  if (!item) return;
 
-  const items = document.querySelectorAll(SELECTORS[platform].item);
-  items.forEach((item) => {
-    const el = item as HTMLElement;
-    const id = getElementId(el);
-    if (selectedItems.has(id)) {
-      el.classList.add('history-item-selecting');
-    } else {
-      el.classList.remove('history-item-selecting');
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return;
+
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return;
+
+  hardClick(menuBtn as HTMLElement);
+  if (!config.projectItemSelector || !config.moveLabel) return;
+
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, config.moveLabel);
+  if (!moveMenuItem) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return;
+  }
+
+  hardClick(moveMenuItem);
+  await new Promise(r => setTimeout(r, 500));
+
+  const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
+  const projects: string[] = [];
+  subMenuItems.forEach(el => {
+    const title = el.querySelector('.truncate')?.textContent;
+    if (title && title !== '新项目') {
+      projects.push(title);
     }
   });
 
-  if (toolbarContainer) {
-    const countEl = toolbarContainer.querySelector('#selected-count');
-    if (countEl) countEl.textContent = `${selectedItems.size} Selected`;
-    
-    const deleteBtn = toolbarContainer.querySelector('#batch-delete-btn') as HTMLButtonElement;
-    if (deleteBtn) deleteBtn.disabled = selectedItems.size === 0;
-  }
-};
+  availableProjects = [...new Set(projects)];
+  
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await new Promise(r => setTimeout(r, 200));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
-const getElementId = (el: HTMLElement) => {
-  // Try to find a unique ID
-  return el.getAttribute('data-testid') || el.innerText.substring(0, 20);
+  renderProjectDropdown();
 };
 
 /**
- * Batch Deletion Logic
- * Warning: This interacts with the UI and is somewhat platform-fragile.
- * It simulates sequential clicks to trigger deletion.
+ * 自动化单次操作
  */
-const startBatchDelete = async () => {
-  const count = selectedItems.size;
-  if (!confirm(`Are you sure you want to delete ${count} items?`)) return;
-
-  const items = Array.from(selectedItems.values());
-  for (const item of items) {
-    try {
-      // Platform specific deletion automation
-      await deleteSingleItem(item.element);
-      selectedItems.delete(item.id);
-      updateSelectionUI();
-      // Delay to allow UI to catch up
-      await new Promise(r => setTimeout(r, 800));
-    } catch (e) {
-      console.error('Failed to delete item', item.title, e);
-    }
-  }
-  
-  alert('Batch operation completed.');
+const deleteOne = async (item: HistoryItem, config: PlatformConfig) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return false;
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return false;
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  hardClick(menuBtn as HTMLElement);
+  const deleteBtn = await waitForElement(config.deleteBtnSelector);
+  if (!deleteBtn) return false;
+  hardClick(deleteBtn);
+  const confirmBtn = await waitForElement(config.confirmBtnSelector);
+  if (!confirmBtn) return false;
+  hardClick(confirmBtn);
+  const isGone = await waitForDisappear(config.confirmBtnSelector);
+  if (!isGone) return false;
+  await new Promise(r => setTimeout(r, 1200));
+  return true;
 };
 
-const deleteSingleItem = async (el: HTMLElement) => {
+const moveOne = async (item: HistoryItem, projectName: string, config: PlatformConfig) => {
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return false;
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return false;
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  if (!config.projectItemSelector || !config.moveLabel) return false;
+
+  hardClick(menuBtn as HTMLElement);
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  if (!moveMenuItem) return false;
+  hardClick(moveMenuItem);
+  const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
+  if (!targetProject) return false;
+  hardClick(targetProject);
+  await new Promise(r => setTimeout(r, 1500));
+  return true;
+};
+
+/**
+ * 更新处理进度文本
+ */
+const updateProgress = (current: number, total: number) => {
+  const el = document.getElementById('processing-progress-text');
+  if (el) el.innerText = `正在处理第 ${current} / ${total} 项...`;
+};
+
+const runBatchDelete = async () => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定要执行删除吗？共 ${ids.length} 项。`)) return;
+
+  isProcessing = true;
   const platform = getPlatform();
   if (!platform) return;
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  if (overlay) overlay.classList.add('processing');
 
-  // 1. Trigger the context menu
-  const menuBtn = el.querySelector(SELECTORS[platform].menuButton) as HTMLElement;
-  if (menuBtn) {
-    menuBtn.click();
-    await new Promise(r => setTimeout(r, 400));
-    
-    // 2. Find Delete button in menu
-    const menuItems = document.querySelectorAll('div[role="menuitem"], li[role="menuitem"]');
-    for (const m of Array.from(menuItems)) {
-      const text = (m as HTMLElement).innerText.toLowerCase();
-      if (text.includes('delete')) {
-        (m as HTMLElement).click();
-        await new Promise(r => setTimeout(r, 400));
-        
-        // 3. Confirm Delete (Modal)
-        const buttons = document.querySelectorAll('button');
-        for (const b of Array.from(buttons)) {
-          if (b.innerText.toLowerCase().includes('delete')) {
-            b.click();
-            break;
-          }
-        }
-        break;
+  const total = ids.length;
+  let currentCount = 0;
+
+  for (const id of ids) {
+    currentCount++;
+    updateProgress(currentCount, total);
+    const item = scannedItems.find(it => it.id === id);
+    if (item) {
+      const success = await deleteOne(item, config);
+      if (success) {
+        selectedIds.delete(id);
+        scannedItems = scannedItems.filter(it => it.id !== id);
+        renderDashboard();
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise(r => setTimeout(r, 500));
       }
     }
   }
+
+  isProcessing = false;
+  if (overlay) overlay.classList.remove('processing');
+  alert('操作结束');
 };
 
-/**
- * UI Injection
- */
-const injectToolbar = () => {
-  if (toolbarContainer) return;
+const runBatchMove = async (projectName: string) => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(`确定将选中的 ${ids.length} 项对话移至项目“${projectName}”吗？`)) return;
 
-  toolbarContainer = document.createElement('div');
-  toolbarContainer.className = 'batch-toolbar-container fixed bottom-8 left-1/2 -translate-x-1/2 z-[10000]';
+  isProcessing = true;
+  const platform = getPlatform();
+  if (!platform) return;
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  if (overlay) overlay.classList.add('processing');
+
+  const total = ids.length;
+  let currentCount = 0;
+
+  for (const id of ids) {
+    currentCount++;
+    updateProgress(currentCount, total);
+    const item = scannedItems.find(it => it.id === id);
+    if (item) {
+      const success = await moveOne(item, projectName, config);
+      if (success) {
+        selectedIds.delete(id);
+        scannedItems = scannedItems.filter(it => it.id !== id);
+        renderDashboard();
+      } else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+
+  isProcessing = false;
+  if (overlay) overlay.classList.remove('processing');
+  alert('迁移操作结束');
+};
+
+const renderDashboard = () => {
+  const container = document.getElementById('dashboard-items-grid');
+  if (!container) return;
   
-  toolbarContainer.innerHTML = `
-    <div class="bg-slate-900/95 backdrop-blur-md text-white rounded-full px-6 py-3 shadow-2xl flex items-center gap-6 border border-slate-700/50">
-      <div class="flex flex-col">
-        <span id="selected-count" class="text-sm font-bold">0 Selected</span>
-        <span class="text-[10px] text-slate-400">Multi-Select Active</span>
+  const filteredItems = scannedItems.filter(item => 
+    item.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  if (scannedItems.length === 0) {
+    container.innerHTML = `<div class="empty-state"><h3>未发现对话</h3><p>请确保侧边栏已展开且包含历史记录</p></div>`;
+  } else if (filteredItems.length === 0) {
+    container.innerHTML = `<div class="empty-state"><h3>未找到匹配结果</h3><p>尝试搜索其他关键词</p></div>`;
+  } else {
+    container.innerHTML = filteredItems.map(item => `
+      <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
+        <div class="card-title">${item.title}</div>
+        <div class="card-checkbox"></div>
       </div>
+    `).join('');
+  }
+  
+  container.querySelectorAll('.chat-card').forEach(card => {
+    (card as HTMLElement).onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isProcessing) return;
       
-      <div class="w-px h-8 bg-slate-700"></div>
+      const target = e.currentTarget as HTMLElement;
+      const id = target.dataset.id;
+      if (!id) return;
+      const isShift = e.shiftKey;
+
+      const currentIds = filteredItems.map(it => it.id);
       
-      <div class="flex items-center gap-3">
-        <button id="batch-ai-btn" class="text-sm px-4 py-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 transition-colors flex items-center gap-2">
-           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-           Group by Gemini
-        </button>
+      if (isShift && pivotId) {
+        const startIndex = currentIds.indexOf(pivotId);
+        const endIndex = currentIds.indexOf(id);
         
-        <button id="batch-delete-btn" disabled class="text-sm px-4 py-1.5 rounded-full bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-          Delete Selected
-        </button>
-        
-        <button id="cancel-batch-btn" class="text-sm px-4 py-1.5 rounded-full bg-slate-700 hover:bg-slate-600 transition-colors">
-          Exit
-        </button>
+        if (startIndex !== -1 && endIndex !== -1) {
+          const [min, max] = [Math.min(startIndex, endIndex), Math.max(startIndex, endIndex)];
+          const rangeIds = currentIds.slice(min, max + 1);
+          const shouldSelect = baseSelection.has(pivotId);
+          const newSelection = new Set(baseSelection);
+          rangeIds.forEach(rid => {
+            if (shouldSelect) newSelection.add(rid);
+            else newSelection.delete(rid);
+          });
+          selectedIds = newSelection;
+        }
+      } else {
+        if (selectedIds.has(id)) {
+          selectedIds.delete(id);
+        } else {
+          selectedIds.add(id);
+        }
+        pivotId = id;
+        baseSelection = new Set(selectedIds);
+      }
+
+      renderDashboard(); 
+      updateFooter();
+    };
+  });
+};
+
+const renderProjectDropdown = () => {
+  const list = document.getElementById('available-projects-list');
+  if (!list) return;
+  if (availableProjects.length === 0) {
+    list.innerHTML = `<div class="project-option-item disabled">无可用项目 (点击刷新)</div>`;
+  } else {
+    list.innerHTML = availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('');
+  }
+  list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
+    (item as HTMLElement).onclick = () => {
+      const projectName = (item as HTMLElement).dataset.name;
+      if (projectName) {
+        runBatchMove(projectName);
+        document.getElementById('project-dropdown')?.classList.remove('open');
+      }
+    };
+  });
+};
+
+const updateFooter = () => {
+  const lbl = document.getElementById('selected-count-label');
+  const delBtn = document.getElementById('dash-delete-btn') as HTMLButtonElement;
+  const moveBtn = document.getElementById('dash-move-trigger') as HTMLButtonElement;
+  if (lbl) lbl.innerText = `${selectedIds.size} 项已选`;
+  if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
+  if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
+};
+
+const toggleDashboard = () => {
+  const platform = getPlatform();
+  if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
+  let overlay = document.getElementById('history-manager-overlay');
+  if (!overlay) {
+    initOverlay();
+    overlay = document.getElementById('history-manager-overlay');
+  }
+  if (!overlay) return;
+
+  isDashboardOpen = !isDashboardOpen;
+  if (isDashboardOpen) {
+    overlay.style.setProperty('display', 'flex', 'important');
+    scannedItems = scanHistory();
+    selectedIds.clear();
+    baseSelection.clear();
+    availableProjects = [];
+    searchQuery = '';
+    pivotId = null;
+    const searchInput = document.getElementById('dash-search-input') as HTMLInputElement;
+    if (searchInput) searchInput.value = '';
+    renderDashboard();
+    updateFooter();
+  } else {
+    overlay.style.display = 'none';
+  }
+};
+
+const toggleTOC = () => {
+  let tocOverlay = document.getElementById('chat-toc-overlay');
+  if (!tocOverlay) {
+    initTOCOverlay();
+    tocOverlay = document.getElementById('chat-toc-overlay');
+  }
+  if (!tocOverlay) return;
+  
+  isTOCSelectionOpen = !isTOCSelectionOpen;
+  if (isTOCSelectionOpen) {
+    tocOverlay.classList.add('open');
+    renderTOCItems();
+  } else {
+    tocOverlay.classList.remove('open');
+  }
+};
+
+const initTOCOverlay = () => {
+  if (document.getElementById('chat-toc-overlay')) return;
+  const toc = document.createElement('div');
+  toc.id = 'chat-toc-overlay';
+  toc.innerHTML = `
+    <div class="toc-sidebar">
+      <div class="toc-header">
+        <h3>会话目录</h3>
+        <button id="close-toc-btn">✕</button>
+      </div>
+      <div id="chat-toc-list" class="toc-body"></div>
+      <div class="toc-footer">
+        <button id="refresh-toc-btn">刷新</button>
       </div>
     </div>
   `;
-
-  document.body.appendChild(toolbarContainer);
-
-  toolbarContainer.querySelector('#batch-delete-btn')?.addEventListener('click', startBatchDelete);
-  toolbarContainer.querySelector('#cancel-batch-btn')?.addEventListener('click', toggleMultiSelectMode);
-  toolbarContainer.querySelector('#batch-ai-btn')?.addEventListener('click', () => {
-    alert('This would use Gemini API to analyze titles and suggest folders/categories for your selected chats.');
-  });
+  document.body.appendChild(toc);
+  
+  document.getElementById('close-toc-btn')!.onclick = () => toggleTOC();
+  document.getElementById('refresh-toc-btn')!.onclick = () => renderTOCItems();
 };
 
-const removeToolbar = () => {
-  if (toolbarContainer) {
-    toolbarContainer.remove();
-    toolbarContainer = null;
-  }
-};
-
-/**
- * Drag to select logic
- */
-const initDragEvents = () => {
-  window.addEventListener('mousedown', (e) => {
-    if (!isMultiSelectActive) return;
-    if (toolbarContainer?.contains(e.target as Node)) return;
-
-    isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-
-    if (!dragBox) {
-      dragBox = document.createElement('div');
-      dragBox.id = 'multi-select-drag-box';
-      document.body.appendChild(dragBox);
-    }
-  });
-
-  window.addEventListener('mousemove', (e) => {
-    if (!isDragging || !dragBox) return;
-
-    const currentX = e.clientX;
-    const currentY = e.clientY;
-
-    const left = Math.min(startX, currentX);
-    const top = Math.min(startY, currentY);
-    const width = Math.abs(currentX - startX);
-    const height = Math.abs(currentY - startY);
-
-    dragBox.style.left = `${left}px`;
-    dragBox.style.top = `${top}px`;
-    dragBox.style.width = `${width}px`;
-    dragBox.style.height = `${height}px`;
-
-    // Check intersection with items
-    const platform = getPlatform();
-    if (!platform) return;
-
-    const items = document.querySelectorAll(SELECTORS[platform].item);
-    items.forEach((item) => {
-      const el = item as HTMLElement;
-      const rect = el.getBoundingClientRect();
-      const id = getElementId(el);
-
-      const intersects = !(
-        rect.right < left ||
-        rect.left > left + width ||
-        rect.bottom < top ||
-        rect.top > top + height
-      );
-
-      if (intersects) {
-        if (!selectedItems.has(id)) {
-          selectedItems.set(id, {
-            id,
-            element: el,
-            title: (el.querySelector(SELECTORS[platform].title) as HTMLElement)?.innerText || 'Untitled'
-          });
-        }
-      }
-    });
-
-    updateSelectionUI();
-  });
-
-  window.addEventListener('mouseup', () => {
-    isDragging = false;
-    if (dragBox) {
-      dragBox.remove();
-      dragBox = null;
-    }
-  });
-
-  // Single click selection
-  window.addEventListener('click', (e) => {
-    if (!isMultiSelectActive) return;
-    
-    const platform = getPlatform();
-    if (!platform) return;
-
-    const itemEl = (e.target as HTMLElement).closest(SELECTORS[platform].item) as HTMLElement;
-    if (itemEl) {
-      const id = getElementId(itemEl);
-      if (selectedItems.has(id)) {
-        selectedItems.delete(id);
-      } else {
-        selectedItems.set(id, {
-          id,
-          element: itemEl,
-          title: (itemEl.querySelector(SELECTORS[platform].title) as HTMLElement)?.innerText || 'Untitled'
-        });
-      }
-      e.stopPropagation();
-      e.preventDefault();
-      updateSelectionUI();
-    }
-  }, true);
-};
-
-/**
- * Entry: Watch for changes and inject "Toggle Mode" button
- */
-const injectModeButton = () => {
-  const platform = getPlatform();
-  if (!platform) return;
-
-  const existing = document.getElementById('history-manager-toggle');
-  if (existing) return;
-
-  const btn = document.createElement('button');
-  btn.id = 'history-manager-toggle';
-  btn.className = 'w-full mb-4 px-3 py-2 text-xs font-semibold bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg transition-all border border-indigo-600/30 flex items-center justify-between group';
-  btn.innerHTML = `
-    <span>History Manager</span>
-    <span class="opacity-0 group-hover:opacity-100 transition-opacity bg-indigo-600 text-white px-1.5 rounded uppercase text-[8px]">Open</span>
+const initOverlay = () => {
+  if (document.getElementById('history-manager-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'history-manager-overlay';
+  overlay.innerHTML = `
+    <div class="dashboard-window">
+      <div class="dashboard-header">
+        <div class="header-info">
+          <h2>多选管理对话</h2>
+          <p>支持 Shift 连选（含反选/范围缩减）</p>
+        </div>
+        <button id="close-dash-btn">✕</button>
+      </div>
+      <div class="dashboard-search-container">
+        <div class="search-input-wrapper">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="dash-search-input" placeholder="模糊搜索历史记录..." />
+        </div>
+      </div>
+      <div id="dashboard-items-grid" class="dashboard-body"></div>
+      <div class="dashboard-footer">
+        <span id="selected-count-label">0 项已选</span>
+        <div class="footer-actions">
+          <button id="dash-refresh-btn" class="btn-secondary">刷新列表</button>
+          <div id="project-dropdown" class="dropdown-wrapper">
+             <button id="dash-move-trigger" class="btn-secondary" disabled>移至项目 ▾</button>
+             <div id="available-projects-list" class="dropdown-content">
+                <div class="project-option-item disabled">点击获取项目列表</div>
+             </div>
+          </div>
+          <button id="dash-delete-btn" class="btn-primary danger" disabled>执行删除</button>
+        </div>
+      </div>
+      <div id="processing-mask">
+         <div class="processing-card">
+            <div class="spinner"></div>
+            <span id="processing-main-text">正在执行自动化操作...</span>
+            <span id="processing-progress-text" style="font-size: 12px; opacity: 0.6; margin-top: -8px;"></span>
+         </div>
+      </div>
+    </div>
   `;
+  document.body.appendChild(overlay);
+  
+  document.getElementById('close-dash-btn')!.onclick = () => toggleDashboard();
+  document.getElementById('dash-refresh-btn')!.onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
+  
+  const searchInput = document.getElementById('dash-search-input');
+  if (searchInput) searchInput.oninput = (e) => { searchQuery = (e.target as HTMLInputElement).value; renderDashboard(); };
+  
+  const moveTrigger = document.getElementById('dash-move-trigger');
+  const dropdown = document.getElementById('project-dropdown');
+  if (moveTrigger && dropdown) {
+    moveTrigger.onclick = (e) => { e.stopPropagation(); dropdown.classList.toggle('open'); if (availableProjects.length === 0) fetchProjects(); };
+    window.addEventListener('click', () => dropdown.classList.remove('open'));
+  }
+  
+  document.getElementById('dash-delete-btn')!.onclick = runBatchDelete;
+};
 
-  btn.onclick = toggleMultiSelectMode;
-
-  const nav = document.querySelector(SELECTORS[platform].container);
-  if (nav) {
-    nav.prepend(btn);
+const injectLauncher = () => {
+  const platform = getPlatform();
+  if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
+  
+  // 注入左侧多选按钮
+  if (!document.getElementById('history-manager-launcher')) {
+    const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
+    if (sidebar) {
+      const btn = document.createElement('button');
+      btn.id = 'history-manager-launcher';
+      btn.innerHTML = `<span>☑</span> 多选`;
+      (btn as HTMLElement).onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
+      sidebar.appendChild(btn);
+    }
+  }
+  
+  // 注入右侧目录按钮
+  if (!document.getElementById('chat-toc-launcher')) {
+    const btn = document.createElement('button');
+    btn.id = 'chat-toc-launcher';
+    btn.innerHTML = `目录`;
+    btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleTOC(); };
+    document.body.appendChild(btn);
   }
 };
 
-// Monitor DOM for navigation changes or new sidebar items
+// Start
 const observer = new MutationObserver(() => {
-  injectModeButton();
+  injectLauncher();
+  // 自动刷新目录
+  if (isTOCSelectionOpen) {
+    renderTOCItems();
+  }
 });
-
 observer.observe(document.body, { childList: true, subtree: true });
+setTimeout(() => { injectLauncher(); initOverlay(); initTOCOverlay(); }, 2000);
 
-// Initialize
-initDragEvents();
-console.log('Chat History Multi-Manager Active.');
+const style = document.createElement('style');
+style.textContent = `
+  .processing #processing-mask { display: flex !important; }
+  .toc-highlight-flash {
+    animation: toc-flash-border 2s ease-out;
+  }
+  @keyframes toc-flash-border {
+    0% { background: rgba(55, 54, 91, 0.2); }
+    100% { background: transparent; }
+  }
+`;
+document.head.appendChild(style);
+
+export {}; 

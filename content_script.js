@@ -3,7 +3,7 @@
  * Global State
  */
 let isDashboardOpen = false;
-let isTOCSidebarOpen = false; 
+let isTOCSidebarOpen = false; // New state for TOC
 let scannedItems = []; 
 let selectedIds = new Set();
 let baseSelection = new Set(); 
@@ -41,7 +41,6 @@ const PLATFORM_CONFIG = {
  * HTML 转义工具，防止消息中的 HTML 标签（如 a 标签）直接在目录中渲染
  */
 const escapeHTML = (str) => {
-  if (!str) return "";
   return str.replace(/[&<>"']/g, (m) => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -61,7 +60,7 @@ const initTOC = () => {
   panel.innerHTML = `
     <div class="toc-header">
       <span class="toc-header-title">会话目录</span>
-      <button id="close-toc-btn" aria-label="关闭目录">✕</button>
+      <button id="close-toc-btn">✕</button>
     </div>
     <div id="toc-content-list" class="toc-list"></div>
     <div class="toc-footer">
@@ -100,12 +99,9 @@ const refreshTOC = () => {
   }
 
   list.innerHTML = Array.from(userMessages).map((msg, idx) => {
-    // 提取文本，优先找 ChatGPT 的 whitespace-pre-wrap 容器
-    const textEl = msg.querySelector('.whitespace-pre-wrap');
-    
-    // 使用 textContent 彻底剥离所有 HTML 标签，仅保留纯文本
-    const rawText = (textEl ? textEl.textContent : msg.textContent).trim().replace(/\n/g, ' ');
-    
+    // 提取文本，优先找 whitespace-pre-wrap
+    const textEl = msg.querySelector('.whitespace-pre-wrap') || msg;
+    const rawText = textEl.innerText.trim().replace(/\n/g, ' ');
     // 执行 HTML 转义，修复 a 标签等被直接渲染的 bug
     const safeText = escapeHTML(rawText);
 
@@ -122,17 +118,15 @@ const refreshTOC = () => {
   // 绑定滚动跳转事件
   list.querySelectorAll('.toc-item').forEach(item => {
     item.onclick = () => {
-      const idx = parseInt(item.dataset.idx);
+      const idx = item.dataset.idx;
       const targetMsg = userMessages[idx];
-      if (targetMsg) {
-        targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        
-        // 添加一个短暂的高亮反馈
-        const originalBg = targetMsg.style.background;
-        targetMsg.style.transition = 'background 0.5s ease';
-        targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
-        setTimeout(() => targetMsg.style.background = originalBg, 2000);
-      }
+      targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      
+      // 添加一个短暂的高亮反馈
+      const originalBg = targetMsg.style.background;
+      targetMsg.style.transition = 'background 0.5s ease';
+      targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
+      setTimeout(() => targetMsg.style.background = originalBg, 1500);
     };
   });
 };

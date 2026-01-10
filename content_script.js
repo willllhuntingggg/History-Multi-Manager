@@ -38,19 +38,6 @@ const PLATFORM_CONFIG = {
 };
 
 /**
- * HTML 转义工具，防止消息中的 HTML 标签（如 a 标签）直接在目录中渲染
- */
-const escapeHTML = (str) => {
-  return str.replace(/[&<>"']/g, (m) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[m]);
-};
-
-/**
  * TOC 功能逻辑
  */
 const initTOC = () => {
@@ -101,15 +88,12 @@ const refreshTOC = () => {
   list.innerHTML = Array.from(userMessages).map((msg, idx) => {
     // 提取文本，优先找 whitespace-pre-wrap
     const textEl = msg.querySelector('.whitespace-pre-wrap') || msg;
-    const rawText = textEl.innerText.trim().replace(/\n/g, ' ');
-    // 执行 HTML 转义，修复 a 标签等被直接渲染的 bug
-    const safeText = escapeHTML(rawText);
-
+    const text = textEl.innerText.trim().replace(/\n/g, ' ');
     return `
-      <div class="toc-item" data-idx="${idx}" title="${safeText}">
+      <div class="toc-item" data-idx="${idx}" title="${text}">
         <div class="toc-item-inner">
           <span class="toc-num">${idx + 1}</span>
-          <span class="toc-text">${safeText}</span>
+          <span class="toc-text">${text}</span>
         </div>
       </div>
     `;

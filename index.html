@@ -5,36 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat History Multi-Manager</title>
-    <style>
-        /* 
-           Crucial: Chrome Extension popups require explicit dimensions in CSS.
-           Without these, the popup may render as 0x0 (blank).
-        */
-        html, body {
-            width: 350px;
-            height: 550px;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #ffffff;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        }
-        #root {
-            width: 100%;
-            height: 100%;
-        }
-    </style>
-    <!-- Tailwind via CDN is useful for sandbox preview but will be bundled in a real build -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script type="importmap">
+    <link rel="stylesheet" href="popup.css">
+<script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@19.0.0",
-    "react-dom": "https://esm.sh/react-dom@19.0.0",
-    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
     "react/": "https://esm.sh/react@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+    "react": "https://esm.sh/react@^19.2.3",
     "vite": "https://esm.sh/vite@^7.3.1",
     "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
@@ -42,8 +20,44 @@
 </script>
 </head>
 <body>
-    <div id="root"></div>
-    <!-- Point to the .tsx file; Vite handles the transformation to .js during build -->
-    <script type="module" src="/index.tsx"></script>
+    <div id="app" class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="brand">
+                <div class="logo-box">
+                    <img src="icons/icon128.png" class="logo-img" alt="Logo" />
+                </div>
+                <h1 id="app-title" class="title">对话历史管理</h1>
+            </div>
+            <button id="lang-btn" class="lang-btn">English</button>
+        </header>
+
+        <main class="main-content">
+            <!-- Status Banner -->
+            <div id="status-container" class="status-box">
+                <!-- Injected via JS -->
+            </div>
+
+            <!-- Instructions -->
+            <div class="instructions">
+                <h2 id="howto-title" class="section-title">操作指南</h2>
+                <div id="steps-container" class="steps-list">
+                    <!-- Injected via JS -->
+                </div>
+            </div>
+
+            <!-- Open Button -->
+            <div class="action-area">
+                <button id="open-btn" class="primary-btn">
+                    <!-- Injected via JS -->
+                </button>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <span class="version">VERSION 1.0.0</span>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
 </body>
 </html>

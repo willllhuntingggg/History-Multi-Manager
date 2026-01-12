@@ -24,7 +24,7 @@ const translations = {
   }
 };
 
-let currentLang = 'zh';
+let currentLang = 'en';
 
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize

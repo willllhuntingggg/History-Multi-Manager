@@ -5,7 +5,7 @@ declare const chrome: any;
 
 const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<any | null>(null);
-  const [lang, setLang] = useState<'zh' | 'en'>('zh');
+  const [lang, setLang] = useState<'zh' | 'en'>('en');
 
   useEffect(() => {
     // 确保在扩展环境下正确获取当前标签页

@@ -468,6 +468,7 @@ const runBatchMove = async (projectName) => {
     const item = scannedItems.find(it => it.id === ids[i]);
     if (item && await moveOne(item, projectName, config)) {
       selectedIds.delete(ids[i]);
+      scannedItems = scannedItems.filter(it => it.id !== ids[i]);
       renderDashboard();
     }
   }

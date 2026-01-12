@@ -6,6 +6,7 @@ let isDashboardOpen = false;
 let isTOCSidebarOpen = false; 
 let scannedItems = []; 
 let selectedIds = new Set();
+let processedIds = new Set(); // Track moved/deleted items
 let baseSelection = new Set(); 
 let pivotId = null; 
 let availableProjects = []; 
@@ -444,6 +445,7 @@ const runBatchDelete = async () => {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
     if (item && await deleteOne(item, config)) {
+      processedIds.add(ids[i]); // Add to processed to prevent reappearing
       selectedIds.delete(ids[i]);
       scannedItems = scannedItems.filter(it => it.id !== ids[i]);
       renderDashboard();
@@ -467,6 +469,7 @@ const runBatchMove = async (projectName) => {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
     if (item && await moveOne(item, projectName, config)) {
+      processedIds.add(ids[i]); // Add to processed to prevent reappearing
       selectedIds.delete(ids[i]);
       scannedItems = scannedItems.filter(it => it.id !== ids[i]);
       renderDashboard();
@@ -542,7 +545,8 @@ const toggleDashboard = () => {
   isDashboardOpen = !isDashboardOpen;
   if (isDashboardOpen) {
     overlay.style.setProperty('display', 'flex', 'important');
-    scannedItems = scanHistory();
+    // Filter out already processed (moved/deleted) items when re-scanning
+    scannedItems = scanHistory().filter(item => !processedIds.has(item.id));
     selectedIds.clear(); renderDashboard(); updateFooter();
   } else {
     overlay.style.display = 'none';

@@ -2,7 +2,7 @@
 /* Reset & Base */
 html, body {
   width: 350px;
-  height: 550px;
+  height: 600px; /* Increased height to fit new content */
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -42,18 +42,21 @@ html, body {
 .logo-box {
   width: 28px;
   height: 28px;
-  background-color: white;
-  border-radius: 4px;
+  /* Removed solid white background */
+  background-color: rgba(255, 255, 255, 0.15); 
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  backdrop-filter: blur(4px);
 }
 
 .logo-img {
   width: 100%;
   height: 100%;
-  padding: 2px;
+  padding: 0; /* Removed padding */
+  object-fit: contain;
 }
 
 .title {
@@ -85,7 +88,8 @@ html, body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px; /* Reduced gap slightly */
+  overflow-y: auto; /* Allow scroll if needed */
 }
 
 /* Status Box */
@@ -97,6 +101,7 @@ html, body {
   border-radius: 12px;
   border-width: 1px;
   border-style: solid;
+  flex-shrink: 0;
 }
 
 .status-box.ready {
@@ -151,13 +156,13 @@ html, body {
   color: #94a3b8; /* slate-400 */
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  margin: 0 0 16px 4px;
+  margin: 0 0 12px 4px;
 }
 
 .steps-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .step-item {
@@ -204,7 +209,7 @@ html, body {
 
 /* Action Area */
 .action-area {
-  padding-top: 8px;
+  padding-top: 4px;
 }
 
 .primary-btn {
@@ -233,6 +238,28 @@ html, body {
   transform: scale(0.98);
 }
 
+/* Coffee Area */
+.coffee-area {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px dashed #e2e8f0;
+  text-align: center;
+}
+
+.coffee-link {
+  display: inline-block;
+  text-decoration: none;
+  color: #64748b; /* slate-500 */
+  font-size: 12px;
+  line-height: 1.5;
+  transition: color 0.2s;
+  cursor: pointer;
+}
+
+.coffee-link:hover {
+  color: #4f46e5; /* indigo-600 */
+}
+
 /* Footer */
 .footer {
   padding: 12px 20px;
@@ -241,6 +268,7 @@ html, body {
   display: flex;
   justify-content: center;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .version {

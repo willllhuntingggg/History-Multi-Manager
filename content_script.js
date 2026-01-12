@@ -236,11 +236,18 @@ const refreshTOC = () => {
       const idx = parseInt(item.dataset.idx);
       const targetMsg = userMessages[idx];
       if (targetMsg) {
+        // Initial scroll to bring element into view and trigger any lazy loading
         targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
         const originalBg = targetMsg.style.background;
         targetMsg.style.transition = 'background 0.5s ease';
         targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
         setTimeout(() => targetMsg.style.background = originalBg, 2000);
+
+        // Correction scroll after a short delay to handle layout shifts (e.g. dynamic content rendering)
+        setTimeout(() => {
+          targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 600);
       }
     };
   });

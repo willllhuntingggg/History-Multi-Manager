@@ -46,6 +46,7 @@ const App: React.FC = () => {
       step1: '点击侧边栏顶部的 <strong class="text-indigo-600">"☑ 多选管理"</strong>。',
       step2: '配合 <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> 键可进行批量连选。',
       step3: '支持批量删除、批量移动至项目、关键词搜索。',
+      step4: '利用侧边 <strong class="text-indigo-600">"目录 (TOC)"</strong> 快速跳转定位长对话提问位置。',
       howTo: '操作指南',
       openBtn: '进入 ChatGPT',
       langBtn: 'English'
@@ -57,6 +58,7 @@ const App: React.FC = () => {
       step1: 'Click <strong class="text-highlight">"☑ Multi-Select"</strong> in the sidebar.',
       step2: 'Use <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> + Click for bulk selection.',
       step3: 'Batch Delete, Batch Move to Projects, and Search filters.',
+      step4: 'Quickly navigate long chats using the <strong class="text-highlight">"TOC"</strong> sidebar panel.',
       howTo: 'How to use',
       openBtn: 'Go to ChatGPT',
       langBtn: '中文'
@@ -97,7 +99,7 @@ const App: React.FC = () => {
           <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">{t.howTo}</h2>
           
           <div className="space-y-4">
-            {[t.step1, t.step2, t.step3].map((step, idx) => (
+            {[t.step1, t.step2, t.step3, t.step4].map((step, idx) => (
               <div className="flex gap-3" key={idx}>
                 <div className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-xs font-bold border border-indigo-100">{idx + 1}</div>
                 <p className="text-[13px] text-slate-600 leading-snug" dangerouslySetInnerHTML={{ __html: step }}></p>

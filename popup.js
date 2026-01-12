@@ -1,5 +1,17 @@
 
 const translations = {
+  en: {
+    title: 'History Manager',
+    ready: 'Ready for ChatGPT',
+    notSupported: 'Please open ChatGPT to use',
+    step1: 'Click <strong class="text-highlight">"☑ Multi-Select"</strong> in the sidebar.',
+    step2: 'Use <span class="kbd">Shift</span> + Click for bulk selection.',
+    step3: 'Batch Delete, Move to Projects, and Search filters.',
+    step4: 'Use the TOC to quickly navigate through long conversations.',
+    howTo: 'How to use',
+    openBtn: 'Go to ChatGPT',
+    langBtn: '中文'
+  },
   zh: {
     title: '对话历史管理',
     ready: '准备就绪：ChatGPT',
@@ -11,21 +23,10 @@ const translations = {
     howTo: '操作指南',
     openBtn: '进入 ChatGPT',
     langBtn: 'English'
-  },
-  en: {
-    title: 'History Manager',
-    ready: 'Ready for ChatGPT',
-    notSupported: 'Please open ChatGPT to use',
-    step1: 'Click <strong class="text-highlight">"☑ History Manager"</strong> in the sidebar.',
-    step2: 'Use <span class="kbd">Shift</span> + Click for bulk selection.',
-    step3: 'Batch Delete, Batch Move to Projects, and Search filters.',
-    howTo: 'How to use',
-    openBtn: 'Go to ChatGPT',
-    langBtn: '中文'
   }
 };
 
-let currentLang = 'zh';
+let currentLang = 'en';
 
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize
@@ -55,12 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function toggleLang() {
-  currentLang = currentLang === 'zh' ? 'en' : 'zh';
+  currentLang = currentLang === 'en' ? 'zh' : 'en';
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.set({ lang: currentLang });
   }
   render();
-  checkTab(); // Refresh status text in new language
+  checkTab();
 }
 
 function checkTab() {
@@ -76,7 +77,7 @@ function checkTab() {
       updateStatus(false);
     }
   } else {
-    updateStatus(false); // Fallback for testing outside extension
+    updateStatus(false);
   }
 }
 

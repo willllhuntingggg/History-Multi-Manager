@@ -5,10 +5,9 @@ declare const chrome: any;
 
 const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<any | null>(null);
-  const [lang, setLang] = useState<'zh' | 'en'>('zh');
+  const [lang, setLang] = useState<'zh' | 'en'>('en');
 
   useEffect(() => {
-    // 确保在扩展环境下正确获取当前标签页
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
       try {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs: any[]) => {
@@ -55,7 +54,7 @@ const App: React.FC = () => {
       title: 'History Manager',
       ready: 'Ready for ChatGPT',
       notSupported: 'Please open ChatGPT to use',
-      step1: 'Click <strong class="text-indigo-600">"☑ History Manager"</strong> in the sidebar.',
+      step1: 'Click <strong class="text-highlight">"☑ Multi-Select"</strong> in the sidebar.',
       step2: 'Use <kbd class="px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded text-[10px] font-mono shadow-sm">Shift</kbd> + Click for bulk selection.',
       step3: 'Batch Delete, Batch Move to Projects, and Search filters.',
       howTo: 'How to use',

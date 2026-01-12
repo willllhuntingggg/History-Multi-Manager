@@ -11,7 +11,7 @@ let pivotId = null;
 let availableProjects = []; 
 let isProcessing = false;
 let searchQuery = ''; 
-let currentUILang = 'en';
+let currentUILang = 'en'; // Default to English
 
 // Platform Configuration
 const PLATFORM_CONFIG = {
@@ -274,7 +274,12 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
     const startTime = Date.now();
     const check = () => {
       const els = document.querySelectorAll(selector);
-      let found = Array.from(els).find(el => textMatch ? el.innerText.includes(textMatch) : true);
+      let found = null;
+      if (textMatch) {
+        found = Array.from(els).find(el => el.innerText.includes(textMatch));
+      } else {
+        found = els[0];
+      }
       if (found && found.offsetParent !== null) resolve(found);
       else if (Date.now() - startTime > timeout) resolve(null);
       else setTimeout(check, 100);
@@ -349,8 +354,13 @@ const fetchProjects = async () => {
   if (!menuBtn) return;
 
   hardClick(menuBtn);
-  const moveLabel = currentUILang === 'zh' ? config.moveLabelZh : config.moveLabelEn;
-  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, moveLabel);
+  
+  // Try English label first, then Chinese
+  let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
+  if (!moveMenuItem) {
+    moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
+  }
+
   if (!moveMenuItem) {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return;
@@ -362,10 +372,14 @@ const fetchProjects = async () => {
   const projects = [];
   subMenuItems.forEach(el => {
     const title = el.querySelector('.truncate')?.innerText;
-    if (title && !title.includes('Project')) projects.push(title);
+    if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title);
   });
   availableProjects = [...new Set(projects)];
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  // Double escape to ensure submenus are closed
+  await new Promise(r => setTimeout(r, 100));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  
   renderProjectDropdown();
 };
 
@@ -397,10 +411,14 @@ const moveOne = async (item, projectName, config) => {
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
-  const moveLabel = currentUILang === 'zh' ? config.moveLabelZh : config.moveLabelEn;
-  const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, moveLabel);
+  
+  let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
+  if (!moveMenuItem) {
+    moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
+  }
   if (!moveMenuItem) return false;
   hardClick(moveMenuItem);
+  
   const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
   if (!targetProject) return false;
   hardClick(targetProject);

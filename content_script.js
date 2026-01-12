@@ -24,7 +24,8 @@ const PLATFORM_CONFIG = {
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
     moveLabel: '移至项目',
-    projectItemSelector: '[role="menuitem"]'
+    projectItemSelector: '[role="menuitem"]',
+    loginIndicator: '[data-testid="user-menu-button"]' // 登录后的用户菜单按钮
   },
   gemini: {
     name: 'Gemini',
@@ -33,7 +34,8 @@ const PLATFORM_CONFIG = {
     urlPattern: /^\/app\/[a-z0-9]{10,}$/i,
     menuBtnSelector: 'button[aria-haspopup="true"]',
     deleteBtnSelector: '[role="menuitem"], .delete-button',
-    confirmBtnSelector: 'button.delete-confirm, .confirm-button'
+    confirmBtnSelector: 'button.delete-confirm, .confirm-button',
+    loginIndicator: 'button[aria-label*="Google Account"]'
   }
 };
 
@@ -594,9 +596,25 @@ const initOverlay = () => {
 const injectLauncher = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform].enabled) return;
+
+  // 检查登录状态
+  const config = PLATFORM_CONFIG[platform];
+  const loginIndicator = document.querySelector(config.loginIndicator);
+  const isLoggedIn = !!loginIndicator;
+
+  // 如果未登录，清除可能存在的按钮并退出
+  if (!isLoggedIn) {
+    document.getElementById('history-manager-launcher')?.remove();
+    document.getElementById('chat-toc-launcher')?.remove();
+    document.getElementById('chat-toc-panel')?.remove();
+    return;
+  }
+
+  // 已登录逻辑
   if (document.getElementById('history-manager-launcher')) return;
   const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
   if (!sidebar) return;
+
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
   btn.innerHTML = `<span>☑</span> 多选`;
@@ -605,11 +623,12 @@ const injectLauncher = () => {
   
   // 注入目录呼出入口
   injectTOCLauncher();
+  initTOC();
 };
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
-setTimeout(() => { injectLauncher(); initOverlay(); initTOC(); }, 2000);
+setTimeout(() => { injectLauncher(); }, 2000);
 
 const style = document.createElement('style');
 style.textContent = `.processing #processing-mask { display: flex !important; }`;

@@ -11,6 +11,7 @@ let pivotId = null;
 let availableProjects = []; 
 let isProcessing = false;
 let searchQuery = ''; 
+let currentUILang = 'en';
 
 // Platform Configuration
 const PLATFORM_CONFIG = {
@@ -22,9 +23,112 @@ const PLATFORM_CONFIG = {
     menuBtnSelector: 'button[data-testid*="-options"]',
     deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
     confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
-    moveLabel: 'Move to',
+    moveLabelEn: 'Move to',
+    moveLabelZh: '移至',
     projectItemSelector: '[role="menuitem"]',
     loginIndicators: ['[data-testid="user-menu-button"]', '#prompt-textarea', 'nav']
+  }
+};
+
+const uiTranslations = {
+  en: {
+    launcher_btn: 'Multi-Select',
+    toc_launcher: 'TOC',
+    toc_title: 'Conversation TOC',
+    toc_refresh: 'Refresh TOC',
+    toc_empty: 'No user messages found',
+    dash_title: 'Batch Manage Chats',
+    dash_subtitle: 'Support Shift-selection (Range/Invert)',
+    dash_search_placeholder: 'Search history...',
+    dash_selected_count: 'items selected',
+    dash_btn_refresh: 'Refresh',
+    dash_btn_move: 'Move to Project',
+    dash_btn_delete: 'Run Delete',
+    dash_processing_main: 'Executing automated operations...',
+    dash_empty_none: 'No conversations found',
+    dash_empty_sidebar: 'Make sure the sidebar is expanded.',
+    dash_empty_search: 'No matches found',
+    confirm_delete: 'Are you sure you want to delete {count} chats?',
+    confirm_move: 'Move {count} chats to "{project}"?',
+    alert_delete_done: 'Batch delete finished.',
+    alert_move_done: 'Batch migration finished.',
+    alert_select_first: 'Please select at least one chat to fetch projects.',
+    msg_processing: 'Processing {current} / {total}...',
+    project_none: 'No projects (Click to refresh)',
+    project_fetch_hint: 'Click to fetch project list'
+  },
+  zh: {
+    launcher_btn: '多选管理',
+    toc_launcher: '目录',
+    toc_title: '会话目录',
+    toc_refresh: '更新目录',
+    toc_empty: '未发现用户侧消息',
+    dash_title: '多选管理对话',
+    dash_subtitle: '支持 Shift 连选（含反选/范围缩减）',
+    dash_search_placeholder: '模糊搜索历史记录...',
+    dash_selected_count: '项已选',
+    dash_btn_refresh: '刷新列表',
+    dash_btn_move: '移至项目',
+    dash_btn_delete: '执行删除',
+    dash_processing_main: '正在执行自动化操作...',
+    dash_empty_none: '未发现对话',
+    dash_empty_sidebar: '请确保侧边栏已展开且包含历史记录',
+    dash_empty_search: '未找到匹配结果',
+    confirm_delete: '确定要执行删除吗？共 {count} 项。',
+    confirm_move: '确定将选中的 {count} 项对话移至项目“{project}”吗？',
+    alert_delete_done: '操作结束',
+    alert_move_done: '迁移操作结束',
+    alert_select_first: '请先选择至少一个对话以获取项目列表',
+    msg_processing: '正在处理第 {current} / {total} 项...',
+    project_none: '无可用项目 (点击刷新)',
+    project_fetch_hint: '点击获取项目列表'
+  }
+};
+
+const t = (key) => uiTranslations[currentUILang][key] || key;
+
+/**
+ * Language Sync
+ */
+const syncLanguage = () => {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['lang'], (result) => {
+      if (result.lang && (result.lang === 'en' || result.lang === 'zh')) {
+        const oldLang = currentUILang;
+        currentUILang = result.lang;
+        if (oldLang !== currentUILang) {
+          refreshUILabel();
+        }
+      }
+    });
+  }
+};
+
+const refreshUILabel = () => {
+  const launcher = document.getElementById('history-manager-launcher');
+  if (launcher) launcher.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
+
+  const tocLauncher = document.getElementById('chat-toc-launcher');
+  if (tocLauncher) tocLauncher.innerHTML = t('toc_launcher');
+
+  const tocPanel = document.getElementById('chat-toc-panel');
+  if (tocPanel) {
+    tocPanel.querySelector('.toc-header-title').innerText = t('toc_title');
+    tocPanel.querySelector('#refresh-toc-btn').innerText = t('toc_refresh');
+  }
+
+  const overlay = document.getElementById('history-manager-overlay');
+  if (overlay) {
+    overlay.querySelector('.header-info h2').innerText = t('dash_title');
+    overlay.querySelector('.header-info p').innerText = t('dash_subtitle');
+    overlay.querySelector('#dash-search-input').placeholder = t('dash_search_placeholder');
+    overlay.querySelector('#dash-refresh-btn').innerText = t('dash_btn_refresh');
+    overlay.querySelector('#dash-move-trigger').innerHTML = `${t('dash_btn_move')} ▾`;
+    overlay.querySelector('#dash-delete-btn').innerText = t('dash_btn_delete');
+    overlay.querySelector('#processing-main-text').innerText = t('dash_processing_main');
+    updateFooter();
+    renderDashboard();
+    renderProjectDropdown();
   }
 };
 
@@ -73,12 +177,12 @@ const initTOC = () => {
   panel.id = 'chat-toc-panel';
   panel.innerHTML = `
     <div class="toc-header">
-      <span class="toc-header-title">Conversation TOC</span>
+      <span class="toc-header-title">${t('toc_title')}</span>
       <button id="close-toc-btn" aria-label="Close">✕</button>
     </div>
     <div id="toc-content-list" class="toc-list"></div>
     <div class="toc-footer">
-      <button id="refresh-toc-btn">Refresh TOC</button>
+      <button id="refresh-toc-btn">${t('toc_refresh')}</button>
     </div>
   `;
   document.body.appendChild(panel);
@@ -107,7 +211,7 @@ const refreshTOC = () => {
   
   const userMessages = document.querySelectorAll('div[data-message-author-role="user"]');
   if (userMessages.length === 0) {
-    list.innerHTML = '<div class="toc-empty">No user messages found</div>';
+    list.innerHTML = `<div class="toc-empty">${t('toc_empty')}</div>`;
     return;
   }
 
@@ -145,7 +249,7 @@ const injectTOCLauncher = () => {
   if (document.getElementById('chat-toc-launcher')) return;
   const btn = document.createElement('button');
   btn.id = 'chat-toc-launcher';
-  btn.innerHTML = `TOC`;
+  btn.innerHTML = t('toc_launcher');
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleTOC(); };
   document.body.appendChild(btn);
 };
@@ -230,7 +334,7 @@ const scanHistory = () => {
  */
 const fetchProjects = async () => {
   if (selectedIds.size === 0) {
-    alert('Please select at least one chat to fetch projects.');
+    alert(t('alert_select_first'));
     return;
   }
   const platform = getPlatform();
@@ -245,7 +349,8 @@ const fetchProjects = async () => {
   if (!menuBtn) return;
 
   hardClick(menuBtn);
-  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, config.moveLabel);
+  const moveLabel = currentUILang === 'zh' ? config.moveLabelZh : config.moveLabelEn;
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, moveLabel);
   if (!moveMenuItem) {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return;
@@ -257,7 +362,7 @@ const fetchProjects = async () => {
   const projects = [];
   subMenuItems.forEach(el => {
     const title = el.querySelector('.truncate')?.innerText;
-    if (title && title !== 'New Project') projects.push(title);
+    if (title && !title.includes('Project')) projects.push(title);
   });
   availableProjects = [...new Set(projects)];
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -292,7 +397,8 @@ const moveOne = async (item, projectName, config) => {
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
-  const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabel);
+  const moveLabel = currentUILang === 'zh' ? config.moveLabelZh : config.moveLabelEn;
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 2000, moveLabel);
   if (!moveMenuItem) return false;
   hardClick(moveMenuItem);
   const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
@@ -304,12 +410,12 @@ const moveOne = async (item, projectName, config) => {
 
 const updateProgress = (current, total) => {
   const el = document.getElementById('processing-progress-text');
-  if (el) el.innerText = `Processing ${current} / ${total}...`;
+  if (el) el.innerText = t('msg_processing').replace('{current}', current).replace('{total}', total);
 };
 
 const runBatchDelete = async () => {
   const ids = Array.from(selectedIds);
-  if (!confirm(`Are you sure you want to delete ${ids.length} chats?`)) return;
+  if (!confirm(t('confirm_delete').replace('{count}', ids.length))) return;
   isProcessing = true;
   const platform = getPlatform();
   const config = PLATFORM_CONFIG[platform];
@@ -327,12 +433,12 @@ const runBatchDelete = async () => {
   }
   isProcessing = false;
   overlay.classList.remove('processing');
-  alert('Batch delete finished.');
+  alert(t('alert_delete_done'));
 };
 
 const runBatchMove = async (projectName) => {
   const ids = Array.from(selectedIds);
-  if (!confirm(`Move ${ids.length} chats to "${projectName}"?`)) return;
+  if (!confirm(t('confirm_move').replace('{count}', ids.length).replace('{project}', projectName))) return;
   isProcessing = true;
   const platform = getPlatform();
   const config = PLATFORM_CONFIG[platform];
@@ -349,7 +455,7 @@ const runBatchMove = async (projectName) => {
   }
   isProcessing = false;
   overlay.classList.remove('processing');
-  alert('Batch migration finished.');
+  alert(t('alert_move_done'));
 };
 
 /**
@@ -360,9 +466,9 @@ const renderDashboard = () => {
   if (!container) return;
   const filteredItems = scannedItems.filter(item => item.title.toLowerCase().includes(searchQuery.toLowerCase()));
   if (scannedItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>No conversations found</h3><p>Make sure the sidebar is expanded.</p></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>${t('dash_empty_none')}</h3><p>${t('dash_empty_sidebar')}</p></div>`;
   } else if (filteredItems.length === 0) {
-    container.innerHTML = `<div class="empty-state"><h3>No matches found</h3></div>`;
+    container.innerHTML = `<div class="empty-state"><h3>${t('dash_empty_search')}</h3></div>`;
   } else {
     container.innerHTML = filteredItems.map(item => `
       <div class="chat-card ${selectedIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
@@ -395,7 +501,7 @@ const renderDashboard = () => {
 const renderProjectDropdown = () => {
   const list = document.getElementById('available-projects-list');
   if (!list) return;
-  list.innerHTML = availableProjects.length ? availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('') : `<div class="project-option-item disabled">No projects (Click to refresh)</div>`;
+  list.innerHTML = availableProjects.length ? availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('') : `<div class="project-option-item disabled">${availableProjects.length === 0 ? t('project_fetch_hint') : t('project_none')}</div>`;
   list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
     item.onclick = () => { runBatchMove(item.dataset.name); document.getElementById('project-dropdown').classList.remove('open'); };
   });
@@ -405,7 +511,7 @@ const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
   const moveBtn = document.getElementById('dash-move-trigger');
-  if (lbl) lbl.innerText = `${selectedIds.size} items selected`;
+  if (lbl) lbl.innerText = `${selectedIds.size} ${t('dash_selected_count')}`;
   if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
   if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
 };
@@ -432,30 +538,30 @@ const initOverlay = () => {
     <div class="dashboard-window">
       <div class="dashboard-header">
         <div class="header-info">
-          <h2>Batch Manage Chats</h2>
-          <p>Support Shift-selection (Range/Invert)</p>
+          <h2>${t('dash_title')}</h2>
+          <p>${t('dash_subtitle')}</p>
         </div>
         <button id="close-dash-btn">✕</button>
       </div>
       <div class="dashboard-search-container">
         <div class="search-input-wrapper">
           <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <input type="text" id="dash-search-input" placeholder="Search history..." />
+          <input type="text" id="dash-search-input" placeholder="${t('dash_search_placeholder')}" />
         </div>
       </div>
       <div id="dashboard-items-grid" class="dashboard-body"></div>
       <div class="dashboard-footer">
-        <span id="selected-count-label">0 items selected</span>
+        <span id="selected-count-label">0 ${t('dash_selected_count')}</span>
         <div class="footer-actions">
-          <button id="dash-refresh-btn" class="btn-secondary">Refresh</button>
+          <button id="dash-refresh-btn" class="btn-secondary">${t('dash_btn_refresh')}</button>
           <div id="project-dropdown" class="dropdown-wrapper">
-             <button id="dash-move-trigger" class="btn-secondary" disabled>Move to Project ▾</button>
+             <button id="dash-move-trigger" class="btn-secondary" disabled>${t('dash_btn_move')} ▾</button>
              <div id="available-projects-list" class="dropdown-content"></div>
           </div>
-          <button id="dash-delete-btn" class="btn-primary danger" disabled>Run Delete</button>
+          <button id="dash-delete-btn" class="btn-primary danger" disabled>${t('dash_btn_delete')}</button>
         </div>
       </div>
-      <div id="processing-mask"><div class="processing-card"><div class="spinner"></div><span>Executing automated operations...</span><span id="processing-progress-text"></span></div></div>
+      <div id="processing-mask"><div class="processing-card"><div class="spinner"></div><span id="processing-main-text">${t('dash_processing_main')}</span><span id="processing-progress-text"></span></div></div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -482,7 +588,7 @@ const injectLauncher = () => {
 
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
-  btn.innerHTML = `<span>☑</span> Multi-Select`;
+  btn.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   sidebar.appendChild(btn);
   injectTOCLauncher();
@@ -491,6 +597,18 @@ const injectLauncher = () => {
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
+
+// Listen for storage changes to sync language immediately
+if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.lang) {
+      syncLanguage();
+    }
+  });
+}
+
+// Initial Sync
+syncLanguage();
 setTimeout(injectLauncher, 2000);
 
 const style = document.createElement('style');

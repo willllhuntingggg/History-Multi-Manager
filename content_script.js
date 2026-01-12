@@ -568,10 +568,21 @@ const initOverlay = () => {
   document.getElementById('close-dash-btn').onclick = toggleDashboard;
   document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
   document.getElementById('dash-search-input').oninput = (e) => { searchQuery = e.target.value; renderDashboard(); };
+  
   const moveTrigger = document.getElementById('dash-move-trigger');
   const dropdown = document.getElementById('project-dropdown');
-  moveTrigger.onclick = (e) => { e.stopPropagation(); dropdown.classList.toggle('open'); if (!availableProjects.length) fetchProjects(); };
-  window.addEventListener('click', () => dropdown.classList.remove('open'));
+  moveTrigger.onclick = (e) => { 
+    e.stopPropagation(); 
+    dropdown.classList.toggle('open'); 
+    if (!availableProjects.length) fetchProjects(); 
+  };
+  
+  // Close dropdown on outside click, but ignore simulated clicks from this script (isTrusted=false)
+  window.addEventListener('click', (e) => {
+    if (!e.isTrusted) return; 
+    dropdown.classList.remove('open');
+  });
+
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 };
 

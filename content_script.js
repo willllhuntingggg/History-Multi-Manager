@@ -28,12 +28,28 @@ const PLATFORM_CONFIG = {
     moveLabelZh: '移至',
     projectItemSelector: '[role="menuitem"]',
     loginIndicators: ['[data-testid="user-menu-button"]', '#prompt-textarea', 'nav']
+  },
+  gemini: {
+    name: 'Gemini',
+    enabled: true,
+    // Gemini sidebar links usually start with /app/
+    linkSelector: 'nav a[href^="/app/"]',
+    urlPattern: /^\/app\/[a-z0-9]+$/i,
+    // Gemini options button (generic fallback required)
+    menuBtnSelector: 'button[aria-label*="More"], button[aria-label*="更多"]',
+    findMenuBtnOutside: true, // Look in parent/siblings if not found in link
+    deleteBtnSelector: '[role="menuitem"]', // Requires text match
+    confirmBtnSelector: 'button', // Requires text match
+    moveLabelEn: null, // Not supported
+    moveLabelZh: null,
+    projectItemSelector: null,
+    loginIndicators: ['a[href*="accounts.google.com"]', '[aria-label*="Gemini"]', 'nav']
   }
 };
 
 const uiTranslations = {
   en: {
-    launcher_btn: 'Multi-Select',
+    launcher_btn: 'Manager',
     toc_launcher: 'TOC',
     toc_title: 'Conversation TOC',
     toc_refresh: 'Refresh TOC',
@@ -56,7 +72,9 @@ const uiTranslations = {
     alert_select_first: 'Please select at least one chat to fetch projects.',
     msg_processing: 'Processing {current} / {total}...',
     project_none: 'No projects (Click to refresh)',
-    project_fetch_hint: 'Click to fetch project list'
+    project_fetch_hint: 'Click to fetch project list',
+    delete_text: ['Delete', '删除'],
+    not_supported_gemini: 'Not supported on Gemini'
   },
   zh: {
     launcher_btn: '多选管理',
@@ -82,7 +100,9 @@ const uiTranslations = {
     alert_select_first: '请先选择至少一个对话以获取项目列表',
     msg_processing: '正在处理第 {current} / {total} 项...',
     project_none: '无可用项目 (点击刷新)',
-    project_fetch_hint: '点击获取项目列表'
+    project_fetch_hint: '点击获取项目列表',
+    delete_text: ['删除', 'Delete'],
+    not_supported_gemini: 'Gemini 暂不支持此功能'
   }
 };
 
@@ -210,15 +230,28 @@ const refreshTOC = () => {
   const list = document.getElementById('toc-content-list');
   if (!list) return;
   
-  const userMessages = document.querySelectorAll('div[data-message-author-role="user"]');
+  // Try finding user messages (ChatGPT vs Gemini)
+  // ChatGPT: div[data-message-author-role="user"]
+  // Gemini: .user-query-container or similar? Gemini DOM is dynamic.
+  // We'll try a few broad selectors.
+  
+  let userMessages = document.querySelectorAll('div[data-message-author-role="user"]');
+  if (userMessages.length === 0) {
+    // Fallback for Gemini or others: Look for blocks that might be user queries
+    // Gemini often wraps user text in a specific class structure. 
+    // This is experimental for Gemini.
+    userMessages = document.querySelectorAll('.user-query-text, .query-text'); 
+  }
+
   if (userMessages.length === 0) {
     list.innerHTML = `<div class="toc-empty">${t('toc_empty')}</div>`;
     return;
   }
 
   list.innerHTML = Array.from(userMessages).map((msg, idx) => {
-    const textEl = msg.querySelector('.whitespace-pre-wrap');
-    const rawText = (textEl ? textEl.textContent : msg.textContent).trim().replace(/\n/g, ' ');
+    // Try to find the text content container
+    const textEl = msg.querySelector('.whitespace-pre-wrap') || msg;
+    const rawText = textEl.textContent.trim().replace(/\n/g, ' ');
     const safeText = escapeHTML(rawText);
 
     return `
@@ -236,7 +269,6 @@ const refreshTOC = () => {
       const idx = parseInt(item.dataset.idx);
       const targetMsg = userMessages[idx];
       if (targetMsg) {
-        // Initial scroll to bring element into view and trigger any lazy loading
         targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
         
         const originalBg = targetMsg.style.background;
@@ -244,7 +276,6 @@ const refreshTOC = () => {
         targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
         setTimeout(() => targetMsg.style.background = originalBg, 2000);
 
-        // Correction scroll after a short delay to handle layout shifts (e.g. dynamic content rendering)
         setTimeout(() => {
           targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 600);
@@ -284,7 +315,11 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
       const els = document.querySelectorAll(selector);
       let found = null;
       if (textMatch) {
-        found = Array.from(els).find(el => el.innerText.includes(textMatch));
+        if (Array.isArray(textMatch)) {
+          found = Array.from(els).find(el => textMatch.some(tm => el.innerText.includes(tm) || el.getAttribute('aria-label')?.includes(tm)));
+        } else {
+          found = Array.from(els).find(el => el.innerText.includes(textMatch) || el.getAttribute('aria-label')?.includes(textMatch));
+        }
       } else {
         found = els[0];
       }
@@ -312,6 +347,7 @@ const waitForDisappear = (selector, timeout = 4000) => {
 const getPlatform = () => {
   const host = window.location.hostname;
   if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
+  if (host.includes('gemini.google.com')) return 'gemini';
   return null;
 };
 
@@ -335,7 +371,14 @@ const scanHistory = () => {
     const rawId = path.split('/').pop();
     if (seenIds.has(rawId)) return;
     seenIds.add(rawId);
-    const titleEl = link.querySelector('.truncate, span[dir="auto"]');
+    
+    // Title extraction varies by platform
+    let titleEl = link.querySelector('.truncate, span[dir="auto"]');
+    if (!titleEl && platform === 'gemini') {
+        titleEl = link.querySelector('span[data-test-id="conversation-title"]');
+        if (!titleEl) titleEl = link; // Fallback to link text if no specific span
+    }
+    
     const title = titleEl ? titleEl.innerText : "Untitled Chat";
     results.push({ id: `id-${rawId}`, title, url: href });
   });
@@ -346,19 +389,32 @@ const scanHistory = () => {
  * Fetch Project List
  */
 const fetchProjects = async () => {
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  
+  if (!config.projectItemSelector) {
+    alert(t('not_supported_gemini'));
+    return;
+  }
+
   if (selectedIds.size === 0) {
     alert(t('alert_select_first'));
     return;
   }
-  const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
+  
   const firstId = Array.from(selectedIds)[0];
   const item = scannedItems.find(it => it.id === firstId);
   if (!item) return;
 
   const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
   if (!link) return;
-  const menuBtn = link.querySelector(config.menuBtnSelector);
+  
+  let menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn && config.findMenuBtnOutside) {
+      menuBtn = link.parentElement.querySelector(config.menuBtnSelector);
+      // Try traversing up if structure is nested deeper
+      if (!menuBtn) menuBtn = link.parentElement?.parentElement?.querySelector(config.menuBtnSelector);
+  }
   if (!menuBtn) return;
 
   hardClick(menuBtn);
@@ -397,25 +453,64 @@ const fetchProjects = async () => {
 const deleteOne = async (item, config) => {
   const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
   if (!link) return false;
-  const menuBtn = link.querySelector(config.menuBtnSelector);
+  
+  let menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn && config.findMenuBtnOutside) {
+      // Logic to find button relative to link in Gemini
+      // Assuming button is sibling or cousin
+      const parent = link.parentElement;
+      if (parent) {
+          menuBtn = parent.querySelector(config.menuBtnSelector);
+          if (!menuBtn && parent.parentElement) {
+               menuBtn = parent.parentElement.querySelector(config.menuBtnSelector);
+          }
+      }
+  }
   if (!menuBtn) return false;
+
   link.scrollIntoView({ block: 'center' });
+  
+  // Simulate hover if necessary (Gemini often hides button)
+  link.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
   await new Promise(r => setTimeout(r, 400));
+  
   hardClick(menuBtn);
-  const deleteBtn = await waitForElement(config.deleteBtnSelector);
-  if (!deleteBtn) return false;
+  
+  // Wait for delete menu item. For Gemini, we might need text matching "Delete"
+  let deleteBtn = await waitForElement(config.deleteBtnSelector, 2000, t('delete_text'));
+  
+  if (!deleteBtn) {
+      // Retry close menu if failed
+      document.body.click();
+      return false;
+  }
+  
   hardClick(deleteBtn);
-  const confirmBtn = await waitForElement(config.confirmBtnSelector);
-  if (!confirmBtn) return false;
+  
+  // Wait for confirm. Gemini confirmation is a modal button.
+  const confirmBtn = await waitForElement(config.confirmBtnSelector, 2000, t('delete_text'));
+  
+  if (!confirmBtn) {
+       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+       return false;
+  }
+  
   hardClick(confirmBtn);
-  return await waitForDisappear(config.confirmBtnSelector);
+  
+  // Wait for item to disappear or dialog to close
+  await new Promise(r => setTimeout(r, 1000));
+  return true;
 };
 
 const moveOne = async (item, projectName, config) => {
+  if (!config.projectItemSelector) return false;
+
   const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
   if (!link) return false;
+  
   const menuBtn = link.querySelector(config.menuBtnSelector);
   if (!menuBtn) return false;
+  
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
@@ -452,7 +547,7 @@ const runBatchDelete = async () => {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
     if (item && await deleteOne(item, config)) {
-      processedIds.add(ids[i]); // Add to processed to prevent reappearing
+      processedIds.add(ids[i]); 
       selectedIds.delete(ids[i]);
       scannedItems = scannedItems.filter(it => it.id !== ids[i]);
       renderDashboard();
@@ -476,7 +571,7 @@ const runBatchMove = async (projectName) => {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
     if (item && await moveOne(item, projectName, config)) {
-      processedIds.add(ids[i]); // Add to processed to prevent reappearing
+      processedIds.add(ids[i]); 
       selectedIds.delete(ids[i]);
       scannedItems = scannedItems.filter(it => it.id !== ids[i]);
       renderDashboard();
@@ -540,9 +635,20 @@ const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
   const moveBtn = document.getElementById('dash-move-trigger');
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+
   if (lbl) lbl.innerText = `${selectedIds.size} ${t('dash_selected_count')}`;
   if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
-  if (moveBtn) moveBtn.disabled = selectedIds.size === 0 || isProcessing;
+  
+  if (moveBtn) {
+    moveBtn.disabled = selectedIds.size === 0 || isProcessing;
+    if (config && !config.projectItemSelector) {
+        moveBtn.style.display = 'none'; // Hide move button if not supported
+    } else {
+        moveBtn.style.display = 'block';
+    }
+  }
 };
 
 const toggleDashboard = () => {
@@ -631,6 +737,13 @@ const injectLauncher = () => {
   btn.id = 'history-manager-launcher';
   btn.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
+  
+  // Adjust button position for Gemini specifically if needed
+  if (platform === 'gemini') {
+      btn.style.bottom = '20px'; // Gemini sidebar is different
+      btn.style.zIndex = '999';
+  }
+  
   sidebar.appendChild(btn);
   injectTOCLauncher();
   initTOC();

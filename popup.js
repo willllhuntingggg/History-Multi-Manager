@@ -1,28 +1,30 @@
 
 const translations = {
   zh: {
-    title: '对话历史管理',
-    ready: '准备就绪：ChatGPT',
-    notSupported: '请在 ChatGPT 页面使用',
-    step1: '点击侧边栏顶部的 <strong class="text-highlight">"☑ 多选管理"</strong>。',
+    title: 'AI 对话历史管理',
+    ready: '准备就绪',
+    notSupported: '请在 ChatGPT 或 Gemini 页面使用',
+    step1: '点击侧边栏悬浮的 <strong class="text-highlight">"☑ 多选管理"</strong>。',
     step2: '配合 <span class="kbd">Shift</span> 键可进行批量连选。',
-    step3: '支持批量删除、批量移动至项目、关键词搜索。',
-    step4: '点击右侧悬浮 <strong class="text-highlight">"目录"</strong> 按钮，查看会话大纲并快速跳转。',
+    step3: '支持批量删除、关键词搜索 (Gemini 暂不支持移动项目)。',
+    step4: '点击右侧悬浮 <strong class="text-highlight">"目录"</strong> 按钮，查看会话大纲。',
     howTo: '操作指南',
-    openBtn: '进入 ChatGPT',
+    openBtn: '打开 ChatGPT',
+    openGeminiBtn: '打开 Gemini',
     langBtn: 'English',
     coffee: '如果这个插件帮到了你，可以请我喝杯咖啡 ☕'
   },
   en: {
-    title: 'History Manager',
-    ready: 'Ready for ChatGPT',
-    notSupported: 'Please open ChatGPT to use',
-    step1: 'Click <strong class="text-highlight">"☑ History Manager"</strong> in the sidebar.',
+    title: 'AI History Manager',
+    ready: 'Ready to manage',
+    notSupported: 'Please open ChatGPT or Gemini',
+    step1: 'Click <strong class="text-highlight">"☑ Manager"</strong> on the sidebar.',
     step2: 'Use <span class="kbd">Shift</span> + Click for bulk selection.',
-    step3: 'Batch Delete, Batch Move to Projects, and Search filters.',
-    step4: 'Click floating <strong class="text-highlight">"TOC"</strong> button to view outline and jump to messages.',
+    step3: 'Batch Delete and Search (Move not supported on Gemini).',
+    step4: 'Click floating <strong class="text-highlight">"TOC"</strong> button to view outline.',
     howTo: 'How to use',
-    openBtn: 'Go to ChatGPT',
+    openBtn: 'Open ChatGPT',
+    openGeminiBtn: 'Open Gemini',
     langBtn: '中文',
     coffee: 'If this extension saves you time, you can buy me a coffee ☕'
   }
@@ -49,6 +51,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('open-btn').addEventListener('click', () => {
     openUrl('https://chatgpt.com');
   });
+  
+  // Add Gemini button listener if it exists (dynamically added)
+  document.body.addEventListener('click', (e) => {
+    if (e.target.id === 'open-gemini-btn' || e.target.closest('#open-gemini-btn')) {
+      openUrl('https://gemini.google.com');
+    }
+  });
 
   // Check Current Tab
   checkTab();
@@ -68,7 +77,7 @@ function toggleLang() {
     chrome.storage.local.set({ lang: currentLang });
   }
   render();
-  checkTab(); // Refresh status text in new language
+  checkTab(); 
 }
 
 function checkTab() {
@@ -76,19 +85,20 @@ function checkTab() {
     try {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs[0];
-        const isSupported = tab?.url?.includes('chatgpt.com') || tab?.url?.includes('chat.openai.com');
-        updateStatus(isSupported);
+        const isChatGPT = tab?.url?.includes('chatgpt.com') || tab?.url?.includes('chat.openai.com');
+        const isGemini = tab?.url?.includes('gemini.google.com');
+        updateStatus(isChatGPT || isGemini, isGemini ? 'Gemini' : 'ChatGPT');
       });
     } catch (e) {
       console.error(e);
       updateStatus(false);
     }
   } else {
-    updateStatus(false); // Fallback for testing outside extension
+    updateStatus(false); 
   }
 }
 
-function updateStatus(isSupported) {
+function updateStatus(isSupported, platformName) {
   const container = document.getElementById('status-container');
   const t = translations[currentLang];
   
@@ -96,7 +106,7 @@ function updateStatus(isSupported) {
     container.className = 'status-box ready';
     container.innerHTML = `
       <div class="dot"></div>
-      <p class="status-text">${t.ready}</p>
+      <p class="status-text">${t.ready}: ${platformName}</p>
     `;
   } else {
     container.className = 'status-box not-supported';
@@ -122,10 +132,16 @@ function render() {
   `).join('');
   document.getElementById('steps-container').innerHTML = stepsHTML;
 
-  const btn = document.getElementById('open-btn');
-  btn.innerHTML = `
-    ${t.openBtn}
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+  const btnArea = document.querySelector('.action-area');
+  btnArea.innerHTML = `
+    <div style="display: flex; gap: 10px;">
+      <button id="open-btn" class="primary-btn" style="flex: 1;">
+        ${t.openBtn}
+      </button>
+      <button id="open-gemini-btn" class="primary-btn" style="flex: 1; background-color: #1e40af;">
+        ${t.openGeminiBtn}
+      </button>
+    </div>
   `;
 
   // Render Coffee

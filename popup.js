@@ -4,9 +4,10 @@ const translations = {
     title: '对话历史管理',
     ready: '准备就绪：ChatGPT',
     notSupported: '请在 ChatGPT 页面使用',
-    step1: '点击侧边栏顶部的 <strong class="text-highlight">"☑ 多选管理"</strong>。',
+    step1: '点击侧边栏 <strong class="text-highlight">"☑ 多选管理"</strong>。',
     step2: '配合 <span class="kbd">Shift</span> 键可进行批量连选。',
     step3: '支持批量删除、批量移动至项目、关键词搜索。',
+    step4: '支持通过目录快速定位多轮会话提问位置。',
     howTo: '操作指南',
     openBtn: '进入 ChatGPT',
     langBtn: 'English'

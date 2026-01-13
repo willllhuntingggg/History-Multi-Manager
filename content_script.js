@@ -157,18 +157,13 @@ const refreshUILabel = () => {
     overlay.querySelector('.header-info p').innerText = t('dash_subtitle');
     overlay.querySelector('#dash-search-input').placeholder = t('dash_search_placeholder');
     overlay.querySelector('#dash-refresh-btn').innerText = t('dash_btn_refresh');
-    overlay.querySelector('#dash-move-trigger').innerHTML = `${t('dash_btn_move')} ▾`;
     overlay.querySelector('#dash-delete-btn').innerText = t('dash_btn_delete');
     overlay.querySelector('#processing-main-text').innerText = t('dash_processing_main');
     updateFooter();
     renderDashboard();
-    renderProjectDropdown();
   }
 };
 
-/**
- * Login status detection
- */
 const isLoggedIn = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform]) return false;
@@ -176,9 +171,6 @@ const isLoggedIn = () => {
   return config.loginIndicators.some(selector => !!document.querySelector(selector));
 };
 
-/**
- * Cleanup injected UI
- */
 const cleanupUI = () => {
   document.getElementById('history-manager-launcher')?.remove();
   document.getElementById('chat-toc-launcher')?.remove();
@@ -188,9 +180,6 @@ const cleanupUI = () => {
   isTOCSidebarOpen = false;
 };
 
-/**
- * HTML Escape Tool
- */
 const escapeHTML = (str) => {
   if (!str) return "";
   return str.replace(/[&<>"']/g, (m) => ({
@@ -274,15 +263,10 @@ const refreshTOC = () => {
       const targetMsg = userMessages[idx];
       if (targetMsg) {
         targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        
         const originalBg = targetMsg.style.background;
         targetMsg.style.transition = 'background 0.5s ease';
         targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
         setTimeout(() => targetMsg.style.background = originalBg, 2000);
-
-        setTimeout(() => {
-          targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 600);
       }
     };
   });
@@ -342,9 +326,6 @@ const getPlatform = () => {
   return null;
 };
 
-/**
- * History Scanner
- */
 const scanHistory = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform]) return [];
@@ -369,21 +350,16 @@ const scanHistory = () => {
         if (!href) return;
         const path = href.split('?')[0];
         if (!config.urlPattern.test(path)) return;
-        if (href.includes('/new') || href === '/') return;
         const rawId = path.split('/').pop();
         if (seenIds.has(rawId)) return;
         seenIds.add(rawId);
         const titleEl = link.querySelector('.truncate, span[dir="auto"]');
-        const title = titleEl ? titleEl.innerText : "Untitled Chat";
-        results.push({ id: `id-${rawId}`, title, url: href, isGemini: false });
+        results.push({ id: `id-${rawId}`, title: titleEl ? titleEl.innerText : "Untitled Chat", url: href, isGemini: false });
     });
   }
   return results;
 };
 
-/**
- * Batch Operations
- */
 const deleteOne = async (item, config) => {
   let element;
   let menuBtn;
@@ -442,9 +418,6 @@ const runBatchDelete = async () => {
   alert(t('alert_delete_done'));
 };
 
-/**
- * Dashboard Rendering
- */
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
@@ -547,7 +520,9 @@ const injectLauncher = () => {
   const platform = getPlatform();
   if (!platform) return;
   if (!isLoggedIn()) { cleanupUI(); return; }
-  if (document.getElementById('history-manager-launcher')) return;
+  
+  const existingLauncher = document.getElementById('history-manager-launcher');
+  if (existingLauncher) return;
 
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
@@ -555,20 +530,30 @@ const injectLauncher = () => {
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
   if (platform === 'gemini') {
-      // Anchoring to Settings & help button as requested
-      const target = document.querySelector('side-nav-action-button[data-test-id="settings-and-help-button"]');
-      if (target) {
-          const parent = target.parentElement;
-          if (parent) {
-              parent.style.display = 'flex';
-              parent.style.flexDirection = 'row';
-              parent.style.alignItems = 'center';
-              parent.style.gap = '8px';
-              target.insertAdjacentElement('afterend', btn);
-              btn.classList.add('gemini-launcher-pos');
+      // Precise targeting for Gemini's redesigned sidebar action buttons
+      const targetBtn = document.querySelector('side-nav-action-button[data-test-id="settings-and-help-button"]');
+      if (targetBtn) {
+          const parentList = targetBtn.parentElement;
+          if (parentList) {
+              // Modify parent layout to accommodate horizontal button
+              parentList.style.display = 'flex';
+              parentList.style.flexDirection = 'row';
+              parentList.style.alignItems = 'center';
+              parentList.style.justifyContent = 'flex-start';
+              parentList.style.padding = '4px 12px';
+              parentList.style.gap = '8px';
+              
+              // Ensure settings button doesn't take 100% width
+              targetBtn.style.flex = '0 1 auto';
+              targetBtn.style.width = 'auto';
+              
+              // Append to the list so it hides when the list (sidebar) hides
+              parentList.appendChild(btn);
+              btn.classList.add('gemini-launcher-inline');
           }
       }
   } else {
+      // Standard ChatGPT injection
       const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
       if (sidebar) sidebar.appendChild(btn);
   }
@@ -579,12 +564,6 @@ const injectLauncher = () => {
 
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
-
-if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.lang) syncLanguage();
-  });
-}
 
 syncLanguage();
 setTimeout(injectLauncher, 2000);

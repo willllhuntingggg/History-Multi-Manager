@@ -1,7 +1,7 @@
 
 /* Existing styles... */
 
-/* 启动按钮样式 - 右对齐胶囊 */
+/* 启动按钮样式 - 默认 ChatGPT */
 #history-manager-launcher {
   position: sticky;
   bottom: 80px;
@@ -29,18 +29,17 @@
   white-space: nowrap;
 }
 
-/* Specific positioning for Gemini to stay bottom-left of the scroll container */
+/* Specific positioning for Gemini - next to Settings button */
 #history-manager-launcher.gemini-launcher-pos {
-    position: fixed;
-    bottom: 18px;
-    left: 18px; /* Left align in the sidebar */
-    margin: 0;
-    z-index: 1000;
-}
-
-/* Ensure infinite-scroller or nav allows absolute positioning */
-infinite-scroller, nav {
     position: relative;
+    bottom: auto;
+    right: auto;
+    left: auto;
+    margin: 0;
+    padding: 6px 12px;
+    height: 32px;
+    z-index: 10;
+    font-size: 11px;
 }
 
 #history-manager-launcher:hover {
@@ -238,7 +237,7 @@ infinite-scroller, nav {
   border-radius: 12px;
   display: flex;
   flex-direction: column;
-  overflow: visible !important; /* Force visibility for dropdowns */
+  overflow: visible !important;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.05), 0 20px 50px rgba(0,0,0,0.3);
   color: #0d0d0d;
   position: relative;
@@ -386,7 +385,7 @@ infinite-scroller, nav {
   align-items: center;
   flex-shrink: 0;
   position: relative;
-  z-index: 50; /* Ensure footer actions stay on top of body cards */
+  z-index: 50;
 }
 @media (prefers-color-scheme: dark) {
   .dashboard-footer { border-top: 1px solid rgba(255,255,255,0.1); }
@@ -416,39 +415,6 @@ infinite-scroller, nav {
 }
 .btn-primary.danger:hover { background: #dc2626; }
 .btn-primary.danger:disabled { opacity: 0.5; cursor: not-allowed; background: #ef4444; }
-
-/* Dropdown */
-.dropdown-wrapper {
-  position: relative;
-  z-index: 60;
-}
-.dropdown-content {
-  display: none;
-  position: absolute;
-  bottom: 100%; left: 0;
-  margin-bottom: 8px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.25);
-  min-width: 220px;
-  max-height: 250px;
-  overflow-y: auto;
-  border: 1px solid rgba(0,0,0,0.1);
-  padding: 6px;
-  z-index: 1000; /* Extremely high z-index for dropdowns */
-}
-.dropdown-wrapper.open .dropdown-content { display: block; }
-
-.project-option-item {
-  padding: 8px 12px; font-size: 13px; cursor: pointer; border-radius: 4px;
-}
-.project-option-item:hover { background: rgba(0,0,0,0.05); }
-.project-option-item.disabled { opacity: 0.5; cursor: default; }
-
-@media (prefers-color-scheme: dark) {
-  .dropdown-content { background: #2f2f2f; border-color: rgba(255,255,255,0.1); }
-  .project-option-item:hover { background: rgba(255,255,255,0.1); }
-}
 
 /* Processing Mask */
 #processing-mask {

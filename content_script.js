@@ -57,7 +57,7 @@ const PLATFORM_CONFIG = {
     },
     menuBtnSelector: 'button[data-test-id="actions-menu-button"]', // Fallback
     deleteBtnSelector: '[role="menuitem"]', // Requires text match
-    confirmBtnSelector: 'button', // Requires text match
+    confirmBtnSelector: 'button[data-test-id="confirm-button"]', // Specific selector for Gemini confirm button
     moveLabelEn: null, 
     moveLabelZh: null,
     projectItemSelector: null,
@@ -532,13 +532,16 @@ const deleteOne = async (item, config) => {
   
   hardClick(deleteBtn);
   
-  const confirmBtn = await waitForElement(config.confirmBtnSelector, 2000, t('delete_text'));
+  // Increased wait time for confirm button animation
+  const confirmBtn = await waitForElement(config.confirmBtnSelector, 5000, t('delete_text'));
   
   if (!confirmBtn) {
        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
        return false;
   }
   
+  // Add small delay to ensure dialog is ready for interaction
+  await new Promise(r => setTimeout(r, 300));
   hardClick(confirmBtn);
   await new Promise(r => setTimeout(r, 1000));
   return true;

@@ -11,6 +11,7 @@ let baseSelection = new Set();
 let pivotId = null; 
 let availableProjects = []; 
 let isProcessing = false;
+let isFetchingProjects = false; // New: Track fetching state
 let searchQuery = ''; 
 let currentUILang = 'en'; // Default to English
 
@@ -104,6 +105,7 @@ const uiTranslations = {
     alert_select_first: 'Please select at least one chat to fetch projects.',
     msg_processing: 'Processing {current} / {total}...',
     project_none: 'No projects (Click to refresh)',
+    project_loading: 'Loading projects...',
     project_fetch_hint: 'Click to fetch project list',
     delete_text: ['Delete', '删除'],
     not_supported_gemini: 'Not supported on Gemini'
@@ -132,6 +134,7 @@ const uiTranslations = {
     alert_select_first: '请先选择至少一个对话以获取项目列表',
     msg_processing: '正在处理第 {current} / {total} 项...',
     project_none: '无可用项目 (点击刷新)',
+    project_loading: '正在加载项目列表...',
     project_fetch_hint: '点击获取项目列表',
     delete_text: ['删除', 'Delete'],
     not_supported_gemini: 'Gemini 暂不支持此功能'
@@ -433,62 +436,79 @@ const scanHistory = () => {
 /**
  * Fetch Project List
  */
-const fetchProjects = async () => {
+const fetchProjects = async (silent = false) => {
+  if (isFetchingProjects) return;
+
   // Use Platform abstraction
   const config = Platform.config;
   
   if (!config.projectItemSelector) {
-    alert(t('not_supported_gemini'));
+    if (!silent) alert(t('not_supported_gemini'));
     return;
   }
 
-  if (selectedIds.size === 0) {
-    alert(t('alert_select_first'));
+  let item = null;
+  if (selectedIds.size > 0) {
+    const firstId = Array.from(selectedIds)[0];
+    item = scannedItems.find(it => it.id === firstId);
+  } else if (silent && scannedItems.length > 0) {
+    item = scannedItems[0];
+  }
+
+  if (!item) {
+    if (!silent) alert(t('alert_select_first'));
     return;
   }
-  
-  const firstId = Array.from(selectedIds)[0];
-  const item = scannedItems.find(it => it.id === firstId);
-  if (!item) return;
 
-  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
-  if (!link) return;
-  
-  let menuBtn = link.querySelector(config.menuBtnSelector);
-  if (!menuBtn && config.findMenuBtnOutside) {
-      menuBtn = link.parentElement.querySelector(config.menuBtnSelector);
-      if (!menuBtn) menuBtn = link.parentElement?.parentElement?.querySelector(config.menuBtnSelector);
-  }
-  if (!menuBtn) return;
+  isFetchingProjects = true;
+  renderProjectDropdown(); // Show loading state
 
-  hardClick(menuBtn);
-  
-  // Try English label first, then Chinese
-  let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
-  if (!moveMenuItem) {
-    moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
-  }
+  try {
+    const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+    if (!link) throw new Error("Chat link not found");
+    
+    let menuBtn = link.querySelector(config.menuBtnSelector);
+    if (!menuBtn && config.findMenuBtnOutside) {
+        menuBtn = link.parentElement.querySelector(config.menuBtnSelector);
+        if (!menuBtn) menuBtn = link.parentElement?.parentElement?.querySelector(config.menuBtnSelector);
+    }
+    if (!menuBtn) throw new Error("Menu button not found");
 
-  if (!moveMenuItem) {
+    link.scrollIntoView({ block: 'center' });
+    hardClick(menuBtn);
+    
+    // Try English label first, then Chinese
+    let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
+    if (!moveMenuItem) {
+      moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
+    }
+
+    if (!moveMenuItem) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      throw new Error("Move menu item not found");
+    }
+    hardClick(moveMenuItem);
+    await new Promise(r => setTimeout(r, 500));
+
+    const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
+    const projects = [];
+    subMenuItems.forEach(el => {
+      const title = el.querySelector('.truncate')?.innerText;
+      if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title);
+    });
+    availableProjects = [...new Set(projects)];
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    return;
+    // Double escape to ensure submenus are closed
+    await new Promise(r => setTimeout(r, 100));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  } catch (e) {
+    console.warn("Fetch projects failed:", e);
+    // Silent mode: suppress alert
+    if (!silent) alert(t('alert_select_first'));
+  } finally {
+    isFetchingProjects = false;
+    renderProjectDropdown();
   }
-  hardClick(moveMenuItem);
-  await new Promise(r => setTimeout(r, 500));
-
-  const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
-  const projects = [];
-  subMenuItems.forEach(el => {
-    const title = el.querySelector('.truncate')?.innerText;
-    if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title);
-  });
-  availableProjects = [...new Set(projects)];
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  // Double escape to ensure submenus are closed
-  await new Promise(r => setTimeout(r, 100));
-  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  
-  renderProjectDropdown();
 };
 
 /**
@@ -683,6 +703,12 @@ const renderDashboard = () => {
 const renderProjectDropdown = () => {
   const list = document.getElementById('available-projects-list');
   if (!list) return;
+
+  if (isFetchingProjects) {
+    list.innerHTML = `<div class="project-option-item disabled">${t('project_loading')}</div>`;
+    return;
+  }
+
   list.innerHTML = availableProjects.length ? availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('') : `<div class="project-option-item disabled">${availableProjects.length === 0 ? t('project_fetch_hint') : t('project_none')}</div>`;
   list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
     item.onclick = () => { runBatchMove(item.dataset.name); document.getElementById('project-dropdown').classList.remove('open'); };
@@ -719,6 +745,11 @@ const toggleDashboard = () => {
     // Filter out already processed (moved/deleted) items when re-scanning
     scannedItems = scanHistory().filter(item => !processedIds.has(item.id));
     selectedIds.clear(); renderDashboard(); updateFooter();
+
+    // Optimistic fetch if we have no projects yet
+    if (availableProjects.length === 0 && Platform.config.projectItemSelector && !isFetchingProjects) {
+        fetchProjects(true); // Silent background fetch
+    }
   } else {
     overlay.style.display = 'none';
   }
@@ -768,7 +799,7 @@ const initOverlay = () => {
   moveTrigger.onclick = (e) => { 
     e.stopPropagation(); 
     dropdown.classList.toggle('open'); 
-    if (!availableProjects.length) fetchProjects(); 
+    if (!availableProjects.length && !isFetchingProjects) fetchProjects(); 
   };
   
   // Close dropdown on outside click, but ignore simulated clicks from this script (isTrusted=false)

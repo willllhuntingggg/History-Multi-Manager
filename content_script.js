@@ -32,15 +32,20 @@ const PLATFORM_CONFIG = {
   gemini: {
     name: 'Gemini',
     enabled: true,
+    // Custom logic for Gemini's non-standard list
     itemSelector: 'div[data-test-id="conversation"]', 
     titleSelector: '.conversation-title',
+    // Extract ID from jslog attribute: jslog="...[&quot;c_123&quot;...]"
     getId: (el) => {
         const jslog = el.getAttribute('jslog');
         if (!jslog) return null;
         const match = jslog.match(/"(c_[a-z0-9]+)"/i) || jslog.match(/&quot;(c_[a-z0-9]+)&quot;/i);
         return match ? match[1] : null;
     },
+    // The menu button is in a sibling container
     getMenuBtn: (el) => {
+        // Based on HTML dump: .conversation is sibling to .conversation-actions-container
+        // They are both children of .conversation-items-container
         const container = el.parentElement; 
         if (container) {
             const actionContainer = container.querySelector('.conversation-actions-container');
@@ -50,9 +55,9 @@ const PLATFORM_CONFIG = {
         }
         return null;
     },
-    menuBtnSelector: 'button[data-test-id="actions-menu-button"]',
-    deleteBtnSelector: '[role="menuitem"]',
-    confirmBtnSelector: 'button[data-test-id="confirm-button"]',
+    menuBtnSelector: 'button[data-test-id="actions-menu-button"]', // Fallback
+    deleteBtnSelector: '[role="menuitem"]', // Requires text match
+    confirmBtnSelector: 'button[data-test-id="confirm-button"]', // Specific selector for Gemini confirm button
     moveLabelEn: null, 
     moveLabelZh: null,
     projectItemSelector: null,
@@ -157,13 +162,18 @@ const refreshUILabel = () => {
     overlay.querySelector('.header-info p').innerText = t('dash_subtitle');
     overlay.querySelector('#dash-search-input').placeholder = t('dash_search_placeholder');
     overlay.querySelector('#dash-refresh-btn').innerText = t('dash_btn_refresh');
+    overlay.querySelector('#dash-move-trigger').innerHTML = `${t('dash_btn_move')} ▾`;
     overlay.querySelector('#dash-delete-btn').innerText = t('dash_btn_delete');
     overlay.querySelector('#processing-main-text').innerText = t('dash_processing_main');
     updateFooter();
     renderDashboard();
+    renderProjectDropdown();
   }
 };
 
+/**
+ * Login status detection
+ */
 const isLoggedIn = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform]) return false;
@@ -171,6 +181,9 @@ const isLoggedIn = () => {
   return config.loginIndicators.some(selector => !!document.querySelector(selector));
 };
 
+/**
+ * Cleanup injected UI
+ */
 const cleanupUI = () => {
   document.getElementById('history-manager-launcher')?.remove();
   document.getElementById('chat-toc-launcher')?.remove();
@@ -180,6 +193,9 @@ const cleanupUI = () => {
   isTOCSidebarOpen = false;
 };
 
+/**
+ * HTML Escape Tool
+ */
 const escapeHTML = (str) => {
   if (!str) return "";
   return str.replace(/[&<>"']/g, (m) => ({
@@ -232,8 +248,16 @@ const refreshTOC = () => {
   const list = document.getElementById('toc-content-list');
   if (!list) return;
   
+  // Try finding user messages (ChatGPT vs Gemini)
+  // ChatGPT: div[data-message-author-role="user"]
+  // Gemini: .user-query-container or similar? Gemini DOM is dynamic.
+  // We'll try a few broad selectors.
+  
   let userMessages = document.querySelectorAll('div[data-message-author-role="user"]');
   if (userMessages.length === 0) {
+    // Fallback for Gemini or others: Look for blocks that might be user queries
+    // Gemini often wraps user text in a specific class structure. 
+    // This is experimental for Gemini.
     userMessages = document.querySelectorAll('.user-query-text, .query-text'); 
   }
 
@@ -243,6 +267,7 @@ const refreshTOC = () => {
   }
 
   list.innerHTML = Array.from(userMessages).map((msg, idx) => {
+    // Try to find the text content container
     const textEl = msg.querySelector('.whitespace-pre-wrap') || msg;
     const rawText = textEl.textContent.trim().replace(/\n/g, ' ');
     const safeText = escapeHTML(rawText);
@@ -263,10 +288,15 @@ const refreshTOC = () => {
       const targetMsg = userMessages[idx];
       if (targetMsg) {
         targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
         const originalBg = targetMsg.style.background;
         targetMsg.style.transition = 'background 0.5s ease';
         targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
         setTimeout(() => targetMsg.style.background = originalBg, 2000);
+
+        setTimeout(() => {
+          targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 600);
       }
     };
   });
@@ -319,6 +349,19 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
   });
 };
 
+const waitForDisappear = (selector, timeout = 4000) => {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const check = () => {
+      const el = document.querySelector(selector);
+      if (!el || el.offsetParent === null) resolve(true);
+      else if (Date.now() - startTime > timeout) resolve(false);
+      else setTimeout(check, 200);
+    };
+    check();
+  });
+};
+
 const getPlatform = () => {
   const host = window.location.hostname;
   if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
@@ -326,6 +369,9 @@ const getPlatform = () => {
   return null;
 };
 
+/**
+ * History Scanner
+ */
 const scanHistory = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform]) return [];
@@ -334,63 +380,203 @@ const scanHistory = () => {
   const seenIds = new Set();
 
   if (config.itemSelector && config.getId) {
+    // Strategy for platforms like Gemini (divs + jslog ID)
     const items = Array.from(document.querySelectorAll(config.itemSelector));
     items.forEach(el => {
         const id = config.getId(el);
         if (!id || seenIds.has(id)) return;
         seenIds.add(id);
+        
+        let title = "Untitled Chat";
         const titleEl = el.querySelector(config.titleSelector);
-        const title = titleEl ? titleEl.innerText : "Untitled Chat";
+        if (titleEl) title = titleEl.innerText;
+        
         results.push({ id: id, title, url: null, isGemini: true });
     });
   } else {
+    // Strategy for platforms like ChatGPT (Anchor links + HREF)
     const links = Array.from(document.querySelectorAll(config.linkSelector));
     links.forEach((link) => {
         const href = link.getAttribute('href');
         if (!href) return;
         const path = href.split('?')[0];
         if (!config.urlPattern.test(path)) return;
+        if (href.includes('/new') || href === '/') return;
         const rawId = path.split('/').pop();
         if (seenIds.has(rawId)) return;
         seenIds.add(rawId);
+        
         const titleEl = link.querySelector('.truncate, span[dir="auto"]');
-        results.push({ id: `id-${rawId}`, title: titleEl ? titleEl.innerText : "Untitled Chat", url: href, isGemini: false });
+        const title = titleEl ? titleEl.innerText : "Untitled Chat";
+        results.push({ id: `id-${rawId}`, title, url: href, isGemini: false });
     });
   }
+
   return results;
 };
 
+/**
+ * Fetch Project List
+ */
+const fetchProjects = async () => {
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  
+  if (!config.projectItemSelector) {
+    alert(t('not_supported_gemini'));
+    return;
+  }
+
+  if (selectedIds.size === 0) {
+    alert(t('alert_select_first'));
+    return;
+  }
+  
+  const firstId = Array.from(selectedIds)[0];
+  const item = scannedItems.find(it => it.id === firstId);
+  if (!item) return;
+
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return;
+  
+  let menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn && config.findMenuBtnOutside) {
+      menuBtn = link.parentElement.querySelector(config.menuBtnSelector);
+      if (!menuBtn) menuBtn = link.parentElement?.parentElement?.querySelector(config.menuBtnSelector);
+  }
+  if (!menuBtn) return;
+
+  hardClick(menuBtn);
+  
+  // Try English label first, then Chinese
+  let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
+  if (!moveMenuItem) {
+    moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
+  }
+
+  if (!moveMenuItem) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return;
+  }
+  hardClick(moveMenuItem);
+  await new Promise(r => setTimeout(r, 500));
+
+  const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
+  const projects = [];
+  subMenuItems.forEach(el => {
+    const title = el.querySelector('.truncate')?.innerText;
+    if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title);
+  });
+  availableProjects = [...new Set(projects)];
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  // Double escape to ensure submenus are closed
+  await new Promise(r => setTimeout(r, 100));
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  
+  renderProjectDropdown();
+};
+
+/**
+ * Batch Operations
+ */
 const deleteOne = async (item, config) => {
   let element;
   let menuBtn;
 
   if (item.isGemini && config.getMenuBtn) {
+      // Logic for Gemini
+      // Re-find the element using ID pattern in jslog or attribute
       const items = Array.from(document.querySelectorAll(config.itemSelector));
-      element = items.find(el => config.getId(el) === item.id);
+      element = items.find(el => {
+         const id = config.getId(el);
+         return id === item.id;
+      });
+      
       if (!element) return false;
       element.scrollIntoView({ block: 'center' });
       element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
       await new Promise(r => setTimeout(r, 400));
+      
       menuBtn = config.getMenuBtn(element);
+
   } else {
+      // Logic for ChatGPT
       element = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
       if (!element) return false;
+      
       menuBtn = element.querySelector(config.menuBtnSelector);
+      if (!menuBtn && config.findMenuBtnOutside) {
+          const parent = element.parentElement;
+          if (parent) {
+              menuBtn = parent.querySelector(config.menuBtnSelector);
+              if (!menuBtn && parent.parentElement) {
+                   menuBtn = parent.parentElement.querySelector(config.menuBtnSelector);
+              }
+          }
+      }
       element.scrollIntoView({ block: 'center' });
       await new Promise(r => setTimeout(r, 400));
   }
 
   if (!menuBtn) return false;
+
   hardClick(menuBtn);
+  
+  // Wait for delete menu item.
   let deleteBtn = await waitForElement(config.deleteBtnSelector, 2000, t('delete_text'));
-  if (!deleteBtn) { document.body.click(); return false; }
+  
+  if (!deleteBtn) {
+      document.body.click();
+      return false;
+  }
+  
   hardClick(deleteBtn);
+  
+  // Increased wait time for confirm button animation
   const confirmBtn = await waitForElement(config.confirmBtnSelector, 5000, t('delete_text'));
-  if (!confirmBtn) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return false; }
+  
+  if (!confirmBtn) {
+       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+       return false;
+  }
+  
+  // Add small delay to ensure dialog is ready for interaction
   await new Promise(r => setTimeout(r, 300));
   hardClick(confirmBtn);
   await new Promise(r => setTimeout(r, 1000));
   return true;
+};
+
+const moveOne = async (item, projectName, config) => {
+  if (!config.projectItemSelector) return false;
+
+  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  if (!link) return false;
+  
+  const menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) return false;
+  
+  link.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 400));
+  hardClick(menuBtn);
+  
+  let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
+  if (!moveMenuItem) {
+    moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
+  }
+  if (!moveMenuItem) return false;
+  hardClick(moveMenuItem);
+  
+  const targetProject = await waitForElement('[role="menu"] [role="menuitem"]', 2000, projectName);
+  if (!targetProject) return false;
+  hardClick(targetProject);
+  await new Promise(r => setTimeout(r, 1500));
+  return true;
+};
+
+const updateProgress = (current, total) => {
+  const el = document.getElementById('processing-progress-text');
+  if (el) el.innerText = t('msg_processing').replace('{current}', current).replace('{total}', total);
 };
 
 const runBatchDelete = async () => {
@@ -403,8 +589,7 @@ const runBatchDelete = async () => {
   overlay.classList.add('processing');
 
   for (let i = 0; i < ids.length; i++) {
-    const el = document.getElementById('processing-progress-text');
-    if (el) el.innerText = t('msg_processing').replace('{current}', i + 1).replace('{total}', ids.length);
+    updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
     if (item && await deleteOne(item, config)) {
       processedIds.add(ids[i]); 
@@ -418,6 +603,33 @@ const runBatchDelete = async () => {
   alert(t('alert_delete_done'));
 };
 
+const runBatchMove = async (projectName) => {
+  const ids = Array.from(selectedIds);
+  if (!confirm(t('confirm_move').replace('{count}', ids.length).replace('{project}', projectName))) return;
+  isProcessing = true;
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+  const overlay = document.getElementById('history-manager-overlay');
+  overlay.classList.add('processing');
+
+  for (let i = 0; i < ids.length; i++) {
+    updateProgress(i + 1, ids.length);
+    const item = scannedItems.find(it => it.id === ids[i]);
+    if (item && await moveOne(item, projectName, config)) {
+      processedIds.add(ids[i]); 
+      selectedIds.delete(ids[i]);
+      scannedItems = scannedItems.filter(it => it.id !== ids[i]);
+      renderDashboard();
+    }
+  }
+  isProcessing = false;
+  overlay.classList.remove('processing');
+  alert(t('alert_move_done'));
+};
+
+/**
+ * Dashboard Rendering
+ */
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
@@ -455,11 +667,33 @@ const renderDashboard = () => {
   });
 };
 
+const renderProjectDropdown = () => {
+  const list = document.getElementById('available-projects-list');
+  if (!list) return;
+  list.innerHTML = availableProjects.length ? availableProjects.map(p => `<div class="project-option-item" data-name="${p}">${p}</div>`).join('') : `<div class="project-option-item disabled">${availableProjects.length === 0 ? t('project_fetch_hint') : t('project_none')}</div>`;
+  list.querySelectorAll('.project-option-item:not(.disabled)').forEach(item => {
+    item.onclick = () => { runBatchMove(item.dataset.name); document.getElementById('project-dropdown').classList.remove('open'); };
+  });
+};
+
 const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
+  const moveBtn = document.getElementById('dash-move-trigger');
+  const platform = getPlatform();
+  const config = PLATFORM_CONFIG[platform];
+
   if (lbl) lbl.innerText = `${selectedIds.size} ${t('dash_selected_count')}`;
   if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
+  
+  if (moveBtn) {
+    moveBtn.disabled = selectedIds.size === 0 || isProcessing;
+    if (config && !config.projectItemSelector) {
+        moveBtn.style.display = 'none'; // Hide move button if not supported
+    } else {
+        moveBtn.style.display = 'block';
+    }
+  }
 };
 
 const toggleDashboard = () => {
@@ -469,6 +703,7 @@ const toggleDashboard = () => {
   isDashboardOpen = !isDashboardOpen;
   if (isDashboardOpen) {
     overlay.style.setProperty('display', 'flex', 'important');
+    // Filter out already processed (moved/deleted) items when re-scanning
     scannedItems = scanHistory().filter(item => !processedIds.has(item.id));
     selectedIds.clear(); renderDashboard(); updateFooter();
   } else {
@@ -500,6 +735,10 @@ const initOverlay = () => {
         <span id="selected-count-label">0 ${t('dash_selected_count')}</span>
         <div class="footer-actions">
           <button id="dash-refresh-btn" class="btn-secondary">${t('dash_btn_refresh')}</button>
+          <div id="project-dropdown" class="dropdown-wrapper">
+             <button id="dash-move-trigger" class="btn-secondary" disabled>${t('dash_btn_move')} ▾</button>
+             <div id="available-projects-list" class="dropdown-content"></div>
+          </div>
           <button id="dash-delete-btn" class="btn-primary danger" disabled>${t('dash_btn_delete')}</button>
         </div>
       </div>
@@ -510,6 +749,21 @@ const initOverlay = () => {
   document.getElementById('close-dash-btn').onclick = toggleDashboard;
   document.getElementById('dash-refresh-btn').onclick = () => { scannedItems = scanHistory(); renderDashboard(); };
   document.getElementById('dash-search-input').oninput = (e) => { searchQuery = e.target.value; renderDashboard(); };
+  
+  const moveTrigger = document.getElementById('dash-move-trigger');
+  const dropdown = document.getElementById('project-dropdown');
+  moveTrigger.onclick = (e) => { 
+    e.stopPropagation(); 
+    dropdown.classList.toggle('open'); 
+    if (!availableProjects.length) fetchProjects(); 
+  };
+  
+  // Close dropdown on outside click, but ignore simulated clicks from this script (isTrusted=false)
+  window.addEventListener('click', (e) => {
+    if (!e.isTrusted) return; 
+    dropdown.classList.remove('open');
+  });
+
   document.getElementById('dash-delete-btn').onclick = runBatchDelete;
 };
 
@@ -520,9 +774,7 @@ const injectLauncher = () => {
   const platform = getPlatform();
   if (!platform) return;
   if (!isLoggedIn()) { cleanupUI(); return; }
-  
-  const existingLauncher = document.getElementById('history-manager-launcher');
-  if (existingLauncher) return;
+  if (document.getElementById('history-manager-launcher')) return;
 
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
@@ -530,28 +782,10 @@ const injectLauncher = () => {
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
   if (platform === 'gemini') {
-      // Precise targeting for Gemini's redesigned sidebar action buttons
-      const targetBtn = document.querySelector('side-nav-action-button[data-test-id="settings-and-help-button"]');
-      if (targetBtn) {
-          const parentList = targetBtn.parentElement;
-          if (parentList) {
-              // Modify parent layout to accommodate horizontal button
-              parentList.style.display = 'flex';
-              parentList.style.flexDirection = 'row';
-              parentList.style.alignItems = 'center';
-              parentList.style.justifyContent = 'flex-start';
-              parentList.style.padding = '4px 12px';
-              parentList.style.gap = '8px';
-              
-              // Ensure settings button doesn't take 100% width
-              targetBtn.style.flex = '0 1 auto';
-              targetBtn.style.width = 'auto';
-              
-              // Append to the list so it hides when the list (sidebar) hides
-              parentList.appendChild(btn);
-              btn.classList.add('gemini-launcher-inline');
-          }
-      }
+      // Inject into infinite-scroller or side-nav for Gemini
+      const container = document.querySelector('infinite-scroller') || document.querySelector('nav') || document.body;
+      container.appendChild(btn);
+      btn.classList.add('gemini-launcher-pos');
   } else {
       // Standard ChatGPT injection
       const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
@@ -565,5 +799,19 @@ const injectLauncher = () => {
 const observer = new MutationObserver(() => injectLauncher());
 observer.observe(document.body, { childList: true, subtree: true });
 
+// Listen for storage changes to sync language immediately
+if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.lang) {
+      syncLanguage();
+    }
+  });
+}
+
+// Initial Sync
 syncLanguage();
 setTimeout(injectLauncher, 2000);
+
+const style = document.createElement('style');
+style.textContent = `.processing #processing-mask { display: flex !important; }`;
+document.head.appendChild(style);

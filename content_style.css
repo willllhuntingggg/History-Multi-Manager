@@ -29,6 +29,27 @@
   white-space: nowrap;
 }
 
+/* Specific positioning for Gemini to stay bottom-right of the scroll container */
+#history-manager-launcher.gemini-launcher-pos {
+    position: fixed;
+    bottom: 20px;
+    left: 260px; /* Approximate width of sidebar, ensures it's near sidebar but visible */
+    margin: 0;
+    /* Actually, user wants "bottom right of the framework". 
+       The sidebar width is variable. Safe bet is fixed positioning 
+       relative to the viewport if the sidebar is open. 
+       Better approach: Absolute position if parent is relative. */
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    z-index: 1000;
+}
+
+/* Ensure infinite-scroller or nav allows absolute positioning */
+infinite-scroller, nav {
+    position: relative;
+}
+
 #history-manager-launcher:hover {
   background: #2a2946;
   transform: translateY(-1px);

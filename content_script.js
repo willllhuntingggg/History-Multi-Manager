@@ -32,18 +32,36 @@ const PLATFORM_CONFIG = {
   gemini: {
     name: 'Gemini',
     enabled: true,
-    // Gemini sidebar links usually start with /app/
-    linkSelector: 'nav a[href^="/app/"]',
-    urlPattern: /^\/app\/[a-z0-9]+$/i,
-    // Gemini options button (generic fallback required)
-    menuBtnSelector: 'button[aria-label*="More"], button[aria-label*="更多"]',
-    findMenuBtnOutside: true, // Look in parent/siblings if not found in link
+    // Custom logic for Gemini's non-standard list
+    itemSelector: 'div[data-test-id="conversation"]', 
+    titleSelector: '.conversation-title',
+    // Extract ID from jslog attribute: jslog="...[&quot;c_123&quot;...]"
+    getId: (el) => {
+        const jslog = el.getAttribute('jslog');
+        if (!jslog) return null;
+        const match = jslog.match(/"(c_[a-z0-9]+)"/i) || jslog.match(/&quot;(c_[a-z0-9]+)&quot;/i);
+        return match ? match[1] : null;
+    },
+    // The menu button is in a sibling container
+    getMenuBtn: (el) => {
+        // Based on HTML dump: .conversation is sibling to .conversation-actions-container
+        // They are both children of .conversation-items-container
+        const container = el.parentElement; 
+        if (container) {
+            const actionContainer = container.querySelector('.conversation-actions-container');
+            if (actionContainer) {
+                return actionContainer.querySelector('button[data-test-id="actions-menu-button"]');
+            }
+        }
+        return null;
+    },
+    menuBtnSelector: 'button[data-test-id="actions-menu-button"]', // Fallback
     deleteBtnSelector: '[role="menuitem"]', // Requires text match
     confirmBtnSelector: 'button', // Requires text match
-    moveLabelEn: null, // Not supported
+    moveLabelEn: null, 
     moveLabelZh: null,
     projectItemSelector: null,
-    loginIndicators: ['a[href*="accounts.google.com"]', '[aria-label*="Gemini"]', 'nav']
+    loginIndicators: ['a[href*="accounts.google.com"]', '[aria-label*="Gemini"]', 'nav', 'infinite-scroller']
   }
 };
 
@@ -358,30 +376,42 @@ const scanHistory = () => {
   const platform = getPlatform();
   if (!platform || !PLATFORM_CONFIG[platform]) return [];
   const config = PLATFORM_CONFIG[platform];
-  const links = Array.from(document.querySelectorAll(config.linkSelector));
   const results = [];
   const seenIds = new Set();
 
-  links.forEach((link) => {
-    const href = link.getAttribute('href');
-    if (!href) return;
-    const path = href.split('?')[0];
-    if (!config.urlPattern.test(path)) return;
-    if (href.includes('/new') || href === '/') return;
-    const rawId = path.split('/').pop();
-    if (seenIds.has(rawId)) return;
-    seenIds.add(rawId);
-    
-    // Title extraction varies by platform
-    let titleEl = link.querySelector('.truncate, span[dir="auto"]');
-    if (!titleEl && platform === 'gemini') {
-        titleEl = link.querySelector('span[data-test-id="conversation-title"]');
-        if (!titleEl) titleEl = link; // Fallback to link text if no specific span
-    }
-    
-    const title = titleEl ? titleEl.innerText : "Untitled Chat";
-    results.push({ id: `id-${rawId}`, title, url: href });
-  });
+  if (config.itemSelector && config.getId) {
+    // Strategy for platforms like Gemini (divs + jslog ID)
+    const items = Array.from(document.querySelectorAll(config.itemSelector));
+    items.forEach(el => {
+        const id = config.getId(el);
+        if (!id || seenIds.has(id)) return;
+        seenIds.add(id);
+        
+        let title = "Untitled Chat";
+        const titleEl = el.querySelector(config.titleSelector);
+        if (titleEl) title = titleEl.innerText;
+        
+        results.push({ id: id, title, url: null, isGemini: true });
+    });
+  } else {
+    // Strategy for platforms like ChatGPT (Anchor links + HREF)
+    const links = Array.from(document.querySelectorAll(config.linkSelector));
+    links.forEach((link) => {
+        const href = link.getAttribute('href');
+        if (!href) return;
+        const path = href.split('?')[0];
+        if (!config.urlPattern.test(path)) return;
+        if (href.includes('/new') || href === '/') return;
+        const rawId = path.split('/').pop();
+        if (seenIds.has(rawId)) return;
+        seenIds.add(rawId);
+        
+        const titleEl = link.querySelector('.truncate, span[dir="auto"]');
+        const title = titleEl ? titleEl.innerText : "Untitled Chat";
+        results.push({ id: `id-${rawId}`, title, url: href, isGemini: false });
+    });
+  }
+
   return results;
 };
 
@@ -412,7 +442,6 @@ const fetchProjects = async () => {
   let menuBtn = link.querySelector(config.menuBtnSelector);
   if (!menuBtn && config.findMenuBtnOutside) {
       menuBtn = link.parentElement.querySelector(config.menuBtnSelector);
-      // Try traversing up if structure is nested deeper
       if (!menuBtn) menuBtn = link.parentElement?.parentElement?.querySelector(config.menuBtnSelector);
   }
   if (!menuBtn) return;
@@ -451,43 +480,58 @@ const fetchProjects = async () => {
  * Batch Operations
  */
 const deleteOne = async (item, config) => {
-  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
-  if (!link) return false;
-  
-  let menuBtn = link.querySelector(config.menuBtnSelector);
-  if (!menuBtn && config.findMenuBtnOutside) {
-      // Logic to find button relative to link in Gemini
-      // Assuming button is sibling or cousin
-      const parent = link.parentElement;
-      if (parent) {
-          menuBtn = parent.querySelector(config.menuBtnSelector);
-          if (!menuBtn && parent.parentElement) {
-               menuBtn = parent.parentElement.querySelector(config.menuBtnSelector);
+  let element;
+  let menuBtn;
+
+  if (item.isGemini && config.getMenuBtn) {
+      // Logic for Gemini
+      // Re-find the element using ID pattern in jslog or attribute
+      const items = Array.from(document.querySelectorAll(config.itemSelector));
+      element = items.find(el => {
+         const id = config.getId(el);
+         return id === item.id;
+      });
+      
+      if (!element) return false;
+      element.scrollIntoView({ block: 'center' });
+      element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 400));
+      
+      menuBtn = config.getMenuBtn(element);
+
+  } else {
+      // Logic for ChatGPT
+      element = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+      if (!element) return false;
+      
+      menuBtn = element.querySelector(config.menuBtnSelector);
+      if (!menuBtn && config.findMenuBtnOutside) {
+          const parent = element.parentElement;
+          if (parent) {
+              menuBtn = parent.querySelector(config.menuBtnSelector);
+              if (!menuBtn && parent.parentElement) {
+                   menuBtn = parent.parentElement.querySelector(config.menuBtnSelector);
+              }
           }
       }
+      element.scrollIntoView({ block: 'center' });
+      await new Promise(r => setTimeout(r, 400));
   }
+
   if (!menuBtn) return false;
 
-  link.scrollIntoView({ block: 'center' });
-  
-  // Simulate hover if necessary (Gemini often hides button)
-  link.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-  await new Promise(r => setTimeout(r, 400));
-  
   hardClick(menuBtn);
   
-  // Wait for delete menu item. For Gemini, we might need text matching "Delete"
+  // Wait for delete menu item.
   let deleteBtn = await waitForElement(config.deleteBtnSelector, 2000, t('delete_text'));
   
   if (!deleteBtn) {
-      // Retry close menu if failed
       document.body.click();
       return false;
   }
   
   hardClick(deleteBtn);
   
-  // Wait for confirm. Gemini confirmation is a modal button.
   const confirmBtn = await waitForElement(config.confirmBtnSelector, 2000, t('delete_text'));
   
   if (!confirmBtn) {
@@ -496,8 +540,6 @@ const deleteOne = async (item, config) => {
   }
   
   hardClick(confirmBtn);
-  
-  // Wait for item to disappear or dialog to close
   await new Promise(r => setTimeout(r, 1000));
   return true;
 };
@@ -730,21 +772,23 @@ const injectLauncher = () => {
   if (!platform) return;
   if (!isLoggedIn()) { cleanupUI(); return; }
   if (document.getElementById('history-manager-launcher')) return;
-  const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
-  if (!sidebar) return;
 
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
   btn.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
-  // Adjust button position for Gemini specifically if needed
   if (platform === 'gemini') {
-      btn.style.bottom = '20px'; // Gemini sidebar is different
-      btn.style.zIndex = '999';
+      // Inject into infinite-scroller or side-nav for Gemini
+      const container = document.querySelector('infinite-scroller') || document.querySelector('nav') || document.body;
+      container.appendChild(btn);
+      btn.classList.add('gemini-launcher-pos');
+  } else {
+      // Standard ChatGPT injection
+      const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
+      if (sidebar) sidebar.appendChild(btn);
   }
   
-  sidebar.appendChild(btn);
   injectTOCLauncher();
   initTOC();
 };

@@ -795,10 +795,26 @@ const injectLauncher = () => {
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
   if (Platform.isGemini) {
-      // Inject into infinite-scroller or side-nav for Gemini
-      const container = document.querySelector('infinite-scroller') || document.querySelector('nav') || document.body;
-      container.appendChild(btn);
-      btn.classList.add('gemini-launcher-pos');
+      // Find the "Settings & help" button
+      const targetBtn = document.querySelector('side-nav-action-button[data-test-id="settings-and-help-button"]');
+      if (targetBtn && targetBtn.parentElement) {
+          const parentList = targetBtn.parentElement;
+          
+          // Change layout to horizontal
+          parentList.style.display = 'flex';
+          parentList.style.flexDirection = 'row';
+          parentList.style.alignItems = 'center';
+          
+          // Let Settings button be flexible but not hog all space
+          targetBtn.style.flex = '1'; 
+          targetBtn.style.width = 'auto'; 
+          
+          parentList.appendChild(btn);
+          btn.classList.add('gemini-launcher-inline');
+      } else {
+          // If not found yet, return and wait for next mutation
+          return;
+      }
   } else {
       // Standard ChatGPT injection
       const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');

@@ -477,11 +477,9 @@ const fetchProjects = async (silent = false) => {
     link.scrollIntoView({ block: 'center' });
     hardClick(menuBtn);
     
-    // Try English label first, then Chinese
-    let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
-    if (!moveMenuItem) {
-      moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
-    }
+    // Improved: Check for both languages at once with increased timeout
+    const moveLabels = [config.moveLabelEn, config.moveLabelZh].filter(Boolean);
+    const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, moveLabels);
 
     if (!moveMenuItem) {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -502,9 +500,12 @@ const fetchProjects = async (silent = false) => {
     await new Promise(r => setTimeout(r, 100));
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   } catch (e) {
-    console.warn("Fetch projects failed:", e);
-    // Silent mode: suppress alert
-    if (!silent) alert(t('alert_select_first'));
+    if (!silent) {
+       console.warn("Fetch projects failed:", e);
+       alert(t('alert_select_first') + ` (Details: ${e.message})`);
+    } else {
+       console.log("Silent fetch projects failed:", e.message);
+    }
   } finally {
     isFetchingProjects = false;
     renderProjectDropdown();
@@ -595,10 +596,10 @@ const moveOne = async (item, projectName, config) => {
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
   
-  let moveMenuItem = await waitForElement(config.projectItemSelector, 2000, config.moveLabelEn);
-  if (!moveMenuItem) {
-    moveMenuItem = await waitForElement(config.projectItemSelector, 1000, config.moveLabelZh);
-  }
+  // Improved: Check for both languages at once
+  const moveLabels = [config.moveLabelEn, config.moveLabelZh].filter(Boolean);
+  const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, moveLabels);
+
   if (!moveMenuItem) return false;
   hardClick(moveMenuItem);
   

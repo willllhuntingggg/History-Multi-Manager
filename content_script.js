@@ -65,6 +65,20 @@ const PLATFORM_CONFIG = {
   }
 };
 
+/**
+ * NEW: Platform Abstraction Layer
+ * Isolates direct access to PLATFORM_CONFIG and getPlatform()
+ */
+const Platform = {
+  get type() { return getPlatform(); },
+  get config() { return PLATFORM_CONFIG[this.type]; },
+  get isGemini() { return this.type === 'gemini'; },
+  
+  // Wrappers for operations that need config
+  async deleteItem(item) { return await deleteOne(item, this.config); },
+  async moveItem(item, project) { return await moveOne(item, project, this.config); }
+};
+
 const uiTranslations = {
   en: {
     launcher_btn: 'Manager',
@@ -175,9 +189,9 @@ const refreshUILabel = () => {
  * Login status detection
  */
 const isLoggedIn = () => {
-  const platform = getPlatform();
-  if (!platform || !PLATFORM_CONFIG[platform]) return false;
-  const config = PLATFORM_CONFIG[platform];
+  // Use Platform abstraction
+  const config = Platform.config;
+  if (!config) return false;
   return config.loginIndicators.some(selector => !!document.querySelector(selector));
 };
 
@@ -373,9 +387,10 @@ const getPlatform = () => {
  * History Scanner
  */
 const scanHistory = () => {
-  const platform = getPlatform();
-  if (!platform || !PLATFORM_CONFIG[platform]) return [];
-  const config = PLATFORM_CONFIG[platform];
+  // Use Platform abstraction
+  const config = Platform.config;
+  if (!config) return [];
+  
   const results = [];
   const seenIds = new Set();
 
@@ -419,8 +434,8 @@ const scanHistory = () => {
  * Fetch Project List
  */
 const fetchProjects = async () => {
-  const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
+  // Use Platform abstraction
+  const config = Platform.config;
   
   if (!config.projectItemSelector) {
     alert(t('not_supported_gemini'));
@@ -583,15 +598,14 @@ const runBatchDelete = async () => {
   const ids = Array.from(selectedIds);
   if (!confirm(t('confirm_delete').replace('{count}', ids.length))) return;
   isProcessing = true;
-  const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
   const overlay = document.getElementById('history-manager-overlay');
   overlay.classList.add('processing');
 
   for (let i = 0; i < ids.length; i++) {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
-    if (item && await deleteOne(item, config)) {
+    // Use Platform.deleteItem instead of direct config/deleteOne calls
+    if (item && await Platform.deleteItem(item)) {
       processedIds.add(ids[i]); 
       selectedIds.delete(ids[i]);
       scannedItems = scannedItems.filter(it => it.id !== ids[i]);
@@ -607,15 +621,14 @@ const runBatchMove = async (projectName) => {
   const ids = Array.from(selectedIds);
   if (!confirm(t('confirm_move').replace('{count}', ids.length).replace('{project}', projectName))) return;
   isProcessing = true;
-  const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
   const overlay = document.getElementById('history-manager-overlay');
   overlay.classList.add('processing');
 
   for (let i = 0; i < ids.length; i++) {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
-    if (item && await moveOne(item, projectName, config)) {
+    // Use Platform.moveItem instead of direct config/moveOne calls
+    if (item && await Platform.moveItem(item, projectName)) {
       processedIds.add(ids[i]); 
       selectedIds.delete(ids[i]);
       scannedItems = scannedItems.filter(it => it.id !== ids[i]);
@@ -680,8 +693,8 @@ const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
   const moveBtn = document.getElementById('dash-move-trigger');
-  const platform = getPlatform();
-  const config = PLATFORM_CONFIG[platform];
+  // Use Platform abstraction
+  const config = Platform.config;
 
   if (lbl) lbl.innerText = `${selectedIds.size} ${t('dash_selected_count')}`;
   if (delBtn) delBtn.disabled = selectedIds.size === 0 || isProcessing;
@@ -771,8 +784,8 @@ const initOverlay = () => {
  * Injection
  */
 const injectLauncher = () => {
-  const platform = getPlatform();
-  if (!platform) return;
+  // Use Platform abstraction
+  if (!Platform.type) return;
   if (!isLoggedIn()) { cleanupUI(); return; }
   if (document.getElementById('history-manager-launcher')) return;
 
@@ -781,7 +794,7 @@ const injectLauncher = () => {
   btn.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
-  if (platform === 'gemini') {
+  if (Platform.isGemini) {
       // Inject into infinite-scroller or side-nav for Gemini
       const container = document.querySelector('infinite-scroller') || document.querySelector('nav') || document.body;
       container.appendChild(btn);

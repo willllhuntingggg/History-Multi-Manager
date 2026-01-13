@@ -782,10 +782,12 @@ const injectLauncher = () => {
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
   if (platform === 'gemini') {
-      // Inject into infinite-scroller or side-nav for Gemini
-      const container = document.querySelector('infinite-scroller') || document.querySelector('nav') || document.body;
-      container.appendChild(btn);
-      btn.classList.add('gemini-launcher-pos');
+      // Inject into nav for Gemini to ensure it hides with sidebar
+      const container = document.querySelector('nav') || document.querySelector('infinite-scroller');
+      if (container) {
+          container.appendChild(btn);
+          btn.classList.add('gemini-launcher-pos');
+      }
   } else {
       // Standard ChatGPT injection
       const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');

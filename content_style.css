@@ -29,12 +29,11 @@
   white-space: nowrap;
 }
 
-/* Specific positioning for Gemini to stay bottom-right of the scroll container */
+/* Specific positioning for Gemini to stay bottom-left of the scroll container */
 #history-manager-launcher.gemini-launcher-pos {
-    position: absolute;
-    bottom: 20px;
-    right: 24px; /* Right align in the sidebar */
-    left: auto;
+    position: fixed;
+    bottom: 18px;
+    left: 18px; /* Left align in the sidebar */
     margin: 0;
     z-index: 1000;
 }

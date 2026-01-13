@@ -782,11 +782,18 @@ const injectLauncher = () => {
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
   if (platform === 'gemini') {
-      // Inject into nav for Gemini to ensure it hides with sidebar
-      const container = document.querySelector('nav') || document.querySelector('infinite-scroller');
+      // Inject strictly into infinite-scroller for Gemini
+      const container = document.querySelector('infinite-scroller');
       if (container) {
           container.appendChild(btn);
           btn.classList.add('gemini-launcher-pos');
+          // Add padding to prevent overlap
+          if (!document.getElementById('gemini-padding-style')) {
+             const style = document.createElement('style');
+             style.id = 'gemini-padding-style';
+             style.textContent = `infinite-scroller .chat-history-list { padding-bottom: 60px !important; }`;
+             document.head.appendChild(style);
+          }
       }
   } else {
       // Standard ChatGPT injection

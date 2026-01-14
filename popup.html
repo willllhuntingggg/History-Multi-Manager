@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat History Multi-Manager</title>
     <link rel="stylesheet" href="popup.css">
-    <script type="module" src="index.js"></script>
 </head>
 <body>
     <div id="app" class="container">
-        <!-- Header -->
         <header class="header">
             <div class="brand">
                 <div class="logo-box">
@@ -22,34 +19,19 @@
         </header>
 
         <main class="main-content">
-            <!-- Status Banner -->
-            <div id="status-container" class="status-box">
-                <!-- Injected via JS -->
-            </div>
-
-            <!-- Instructions -->
+            <div id="status-container" class="status-box"></div>
             <div class="instructions">
                 <h2 id="howto-title" class="section-title">操作指南</h2>
-                <div id="steps-container" class="steps-list">
-                    <!-- Injected via JS -->
-                </div>
+                <div id="steps-container" class="steps-list"></div>
             </div>
-
-            <!-- Open Button -->
             <div class="action-area">
-                <button id="open-btn" class="primary-btn">
-                    <!-- Injected via JS -->
-                </button>
+                <button id="open-btn" class="primary-btn">正在加载...</button>
             </div>
-
-            <!-- Buy me a coffee -->
-            <div id="coffee-container" class="coffee-area">
-                <!-- Injected via JS -->
-            </div>
+            <div id="coffee-container" class="coffee-area"></div>
         </main>
 
         <footer class="footer">
-            <span class="version">VERSION 1.0.0</span>
+            <span class="version">VERSION 1.1.0</span>
         </footer>
     </div>
     <script src="popup.js"></script>

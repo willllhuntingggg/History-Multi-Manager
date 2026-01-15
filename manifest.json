@@ -4,7 +4,7 @@
   "name": "AI Chat History Manager",
   "version": "1.1.0",
   "description": "Batch manage chat history for ChatGPT and Google Gemini.",
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage"],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

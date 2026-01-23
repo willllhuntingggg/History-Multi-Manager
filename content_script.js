@@ -33,36 +33,54 @@ const PLATFORM_CONFIG = {
   gemini: {
     name: 'Gemini',
     enabled: true,
-    // Custom logic for Gemini's non-standard list
-    itemSelector: 'div[data-test-id="conversation"]', 
+    // Updated based on user HTML: <a data-test-id="conversation" ...>
+    itemSelector: 'a[data-test-id="conversation"]', 
     titleSelector: '.conversation-title',
-    // Extract ID from jslog attribute: jslog="...[&quot;c_123&quot;...]"
+    
+    // Extract ID from href (primary) or jslog (secondary)
     getId: (el) => {
+        const href = el.getAttribute('href');
+        if (href) {
+            // Match /app/ followed by alphanumeric ID
+            const match = href.match(/\/app\/([a-z0-9]+)/i);
+            if (match) return match[1];
+        }
+        
         const jslog = el.getAttribute('jslog');
-        if (!jslog) return null;
-        const match = jslog.match(/"(c_[a-z0-9]+)"/i) || jslog.match(/&quot;(c_[a-z0-9]+)&quot;/i);
-        return match ? match[1] : null;
-    },
-    // The menu button is in a sibling container
-    getMenuBtn: (el) => {
-        // Based on HTML dump: .conversation is sibling to .conversation-actions-container
-        // They are both children of .conversation-items-container
-        const container = el.parentElement; 
-        if (container) {
-            const actionContainer = container.querySelector('.conversation-actions-container');
-            if (actionContainer) {
-                return actionContainer.querySelector('button[data-test-id="actions-menu-button"]');
-            }
+        if (jslog) {
+             const match = jslog.match(/"(c_[a-z0-9]+)"/i) || jslog.match(/&quot;(c_[a-z0-9]+)&quot;/i);
+             if (match) return match[1];
         }
         return null;
     },
-    menuBtnSelector: 'button[data-test-id="actions-menu-button"]', // Fallback
-    deleteBtnSelector: '[role="menuitem"]', // Requires text match
-    confirmBtnSelector: 'button[data-test-id="confirm-button"]', // Specific selector for Gemini confirm button
+
+    // Find the menu button relative to the <a> tag
+    getMenuBtn: (el) => {
+        // el is the <a> tag. 
+        // The button is usually in the parent container (wrapper) or a sibling container.
+        const btnSelector = 'button[data-test-id="actions-menu-button"]';
+        
+        // 1. Try finding in the immediate parent
+        if (el.parentElement) {
+            const btn = el.parentElement.querySelector(btnSelector);
+            if (btn) return btn;
+        }
+        
+        // 2. Try traversing up one more level (grandparent) if the <a> is wrapped tightly
+        if (el.parentElement && el.parentElement.parentElement) {
+            const btn = el.parentElement.parentElement.querySelector(btnSelector);
+            if (btn) return btn;
+        }
+
+        return null;
+    },
+    menuBtnSelector: 'button[data-test-id="actions-menu-button"]', 
+    deleteBtnSelector: '[role="menuitem"]', 
+    confirmBtnSelector: 'button[data-test-id="confirm-button"]',
     moveLabelEn: null, 
     moveLabelZh: null,
     projectItemSelector: null,
-    loginIndicators: ['a[href*="accounts.google.com"]', '[aria-label*="Gemini"]', 'nav', 'infinite-scroller']
+    loginIndicators: ['a[href*="accounts.google.com"]', '[aria-label*="Gemini"]', 'nav', 'infinite-scroller', 'a[data-test-id="conversation"]']
   }
 };
 
@@ -398,7 +416,7 @@ const scanHistory = () => {
   const seenIds = new Set();
 
   if (config.itemSelector && config.getId) {
-    // Strategy for platforms like Gemini (divs + jslog ID)
+    // Strategy for platforms like Gemini
     const items = Array.from(document.querySelectorAll(config.itemSelector));
     items.forEach(el => {
         const id = config.getId(el);
@@ -406,8 +424,19 @@ const scanHistory = () => {
         seenIds.add(id);
         
         let title = "Untitled Chat";
-        const titleEl = el.querySelector(config.titleSelector);
-        if (titleEl) title = titleEl.innerText;
+        if (config.titleSelector) {
+            const titleEl = el.querySelector(config.titleSelector);
+            if (titleEl) title = titleEl.innerText;
+        }
+
+        // Fallback title extraction for Gemini <a> tags
+        if (title === "Untitled Chat" && config.name === 'Gemini') {
+            // Get text, remove known UI labels like date/time if attached (simplistic)
+            const raw = el.innerText;
+            if (raw && raw.trim().length > 0) {
+               title = raw.split('\n')[0].trim();
+            }
+        }
         
         results.push({ id: id, title, url: null, isGemini: true });
     });

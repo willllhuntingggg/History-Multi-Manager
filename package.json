@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && cp manifest.json content_style.css dist/ && cp -r icons dist/",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -48,13 +48,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Bind Events
   document.getElementById('lang-btn').addEventListener('click', toggleLang);
-  document.getElementById('open-btn').addEventListener('click', () => {
-    openUrl('https://chatgpt.com');
-  });
   
-  // Add Gemini button listener if it exists (dynamically added)
+  // 使用事件委托处理动态生成的按钮点击事件
   document.body.addEventListener('click', (e) => {
-    if (e.target.id === 'open-gemini-btn' || e.target.closest('#open-gemini-btn')) {
+    const target = e.target.closest('button');
+    if (!target) return;
+
+    if (target.id === 'open-btn') {
+      openUrl('https://chatgpt.com');
+    } else if (target.id === 'open-gemini-btn') {
       openUrl('https://gemini.google.com');
     }
   });

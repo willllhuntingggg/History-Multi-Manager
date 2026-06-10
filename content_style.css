@@ -1,5 +1,5 @@
 
-/* Existing styles... */
+/* Existing styles */
 
 /* 启动按钮样式 - 右对齐胶囊 */
 #history-manager-launcher {
@@ -33,16 +33,15 @@
 #history-manager-launcher.gemini-launcher-inline {
     position: static;
     margin: 0;
-    margin-right: 8px; /* Small gap from right edge or container padding */
+    margin-right: 8px;
     bottom: auto;
     right: auto;
     left: auto;
     transform: none;
     z-index: 1;
-    /* Use same colors but adjust size to fit */
     padding: 6px 10px;
     height: 32px;
-    box-shadow: none; /* Flat integration */
+    box-shadow: none;
     border: 1px solid rgba(220, 219, 246, 0.1);
 }
 
@@ -82,7 +81,7 @@
   border-radius: 12px;
   display: flex;
   flex-direction: column;
-  overflow: visible !important; /* Force visibility for dropdowns */
+  overflow: visible !important;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.05), 0 20px 50px rgba(0,0,0,0.3);
   color: #0d0d0d;
   position: relative;
@@ -90,9 +89,9 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  .dashboard-window { 
-    background: #212121; 
-    color: #ececf1; 
+  .dashboard-window {
+    background: #212121;
+    color: #ececf1;
     box-shadow: 0 0 0 1px rgba(255,255,255,0.1), 0 20px 50px rgba(0,0,0,0.5);
   }
 }
@@ -186,9 +185,9 @@
   background: rgba(55, 54, 91, 0.08);
 }
 @media (prefers-color-scheme: dark) {
-  .chat-card.selected { 
-    border-color: #706f9e; 
-    background: rgba(112, 111, 158, 0.2); 
+  .chat-card.selected {
+    border-color: #706f9e;
+    background: rgba(112, 111, 158, 0.2);
   }
 }
 
@@ -234,7 +233,7 @@
   align-items: center;
   flex-shrink: 0;
   position: relative;
-  z-index: 50; /* Ensure footer actions stay on top of body cards */
+  z-index: 50;
 }
 @media (prefers-color-scheme: dark) {
   .dashboard-footer { border-top: 1px solid rgba(255,255,255,0.1); }
@@ -283,7 +282,7 @@
   overflow-y: auto;
   border: 1px solid rgba(0,0,0,0.1);
   padding: 6px;
-  z-index: 1000; /* Extremely high z-index for dropdowns */
+  z-index: 1000;
 }
 .dropdown-wrapper.open .dropdown-content { display: block; }
 
@@ -331,3 +330,135 @@
 }
 .empty-state h3 { margin: 0 0 8px; font-size: 16px; }
 .empty-state p { margin: 0; font-size: 13px; }
+
+/* 全新 Gemini Minimap — 统一行内文本+指示线 */
+#gemini-minimap-container {
+  position: fixed;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: stretch;
+  transition: all 0.3s ease;
+}
+
+/* 面板：默认只有指示线可见（右侧 34px 露出来），hover 展开显示完整文本 */
+.minimap-panel {
+  max-height: 440px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  width: 34px;
+  transition: width 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
+  scrollbar-width: thin;
+}
+
+#gemini-minimap-container.minimap-expanded .minimap-panel {
+  width: 380px;
+  background: #ffffff;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.minimap-panel::-webkit-scrollbar {
+  width: 4px;
+}
+.minimap-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+.minimap-panel::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+/* 每一行 = 文本 + 指示线 */
+.minimap-row {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  flex-shrink: 0;
+  min-height: 34px;
+  transition: background 0.2s ease;
+}
+
+.minimap-row:hover {
+  background: rgba(55, 54, 91, 0.05);
+}
+
+.minimap-row-active {
+  /* No background/border change — only the indicator line color changes */
+}
+
+/* 文本 — 默认被 overflow-x: hidden 裁切，面板展开后可见 */
+.row-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 18px;
+  padding: 8px 0 8px 13px;
+  color: #333;
+  opacity: 0;
+  transition: opacity 0.25s ease 0.05s;
+}
+
+#gemini-minimap-container.minimap-expanded .row-text {
+  opacity: 1;
+}
+
+/* 指示线 — 始终可见，在行最右侧；保持稳定，无拉长动画 */
+.row-indicator {
+  flex-shrink: 0;
+  width: 18px;
+  height: 3px;
+  margin: 15.5px 8px;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 2px;
+  transition: background-color 0.2s ease;
+}
+
+.minimap-row:hover .row-indicator {
+  background-color: rgba(0, 0, 0, 0.6);
+}
+
+.minimap-row-active .row-indicator {
+  background-color: #37365B;
+  box-shadow: 0 0 8px rgba(55, 54, 91, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  #gemini-minimap-container.minimap-expanded .minimap-panel {
+    background: #1e1e1e;
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+  .minimap-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+  }
+  .row-text {
+    color: #e5e5e5;
+  }
+  .minimap-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .minimap-row-active {
+    /* No background/border change — only the indicator line color changes */
+  }
+  .row-indicator {
+    background-color: rgba(255, 255, 255, 0.3);
+  }
+  .minimap-row:hover .row-indicator {
+    background-color: rgba(255, 255, 255, 0.7);
+  }
+  .minimap-row-active .row-indicator {
+    background-color: #706f9e;
+    box-shadow: 0 0 8px rgba(112, 111, 158, 0.5);
+  }
+}
+

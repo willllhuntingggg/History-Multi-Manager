@@ -719,9 +719,221 @@ const injectLauncher = () => {
   }
 };
 
+/**
+ * Gemini Minimap TOC (Inspired by ChatGPT)
+ */
+let lastQueryCount = 0;
+let currentHighlightIndex = -1;
+let scrollHandler = null;
+
+// Function to check which query is closest to viewport center
+const checkVisibleQuery = (blocksArray) => {
+  if (!blocksArray || !blocksArray.length) return -1;
+  const viewportCenter = window.innerHeight / 2;
+  let closestIndex = 0;
+  let closestDist = Infinity;
+
+  blocksArray.forEach((block, index) => {
+    const rect = block.getBoundingClientRect();
+    const blockCenter = rect.top + rect.height / 2;
+    const dist = Math.abs(blockCenter - viewportCenter);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestIndex = index;
+    }
+  });
+
+  return closestIndex;
+};
+
+// Update indicator lines highlight — re-scans DOM for fresh references
+const updateIndicatorHighlight = () => {
+  const container = document.getElementById('gemini-minimap-container');
+  if (!container) return;
+
+  // Re-scan user query blocks fresh from DOM (avoids stale references)
+  const pTags = document.querySelectorAll('.query-text-line');
+  const freshBlocks = [];
+  pTags.forEach(p => {
+    let block = p.closest('user-query');
+    if (!block) {
+      block = p.parentElement?.parentElement || p.parentElement;
+    }
+    if (block && !freshBlocks.includes(block)) freshBlocks.push(block);
+  });
+  if (freshBlocks.length === 0) return;
+
+  const visibleIndex = checkVisibleQuery(freshBlocks);
+  const rows = container.querySelectorAll('.minimap-row');
+
+  rows.forEach((row, i) => {
+    if (i === visibleIndex) {
+      row.classList.add('minimap-row-active');
+    } else {
+      row.classList.remove('minimap-row-active');
+    }
+  });
+
+  // Scroll active row into view inside the panel
+  if (visibleIndex >= 0 && rows[visibleIndex]) {
+    const panel = container.querySelector('.minimap-panel');
+    const activeRow = rows[visibleIndex];
+    if (panel && activeRow) {
+      const rowRect = activeRow.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      if (rowRect.top < panelRect.top || rowRect.bottom > panelRect.bottom) {
+        activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }
+};
+
+const renderGeminiTOC = () => {
+  if (!Platform.isGemini) return;
+  if (isDashboardOpen) {
+    const existing = document.getElementById('gemini-minimap-container');
+    if (existing) {
+      existing.classList.remove('minimap-expanded');
+    }
+    return;
+  }
+  
+  // Find all user queries. Gemini wraps them or they are in .query-text-line
+  const pTags = document.querySelectorAll('.query-text-line');
+  const queryBlocks = new Set();
+  pTags.forEach(p => {
+    // Find the closest major container, usually 'user-query' or a div containing the whole block
+    let container = p.closest('user-query');
+    if (!container) {
+      container = p.parentElement?.parentElement || p.parentElement;
+    }
+    if (container) queryBlocks.add(container);
+  });
+  
+  const blocksArray = Array.from(queryBlocks);
+  
+  // If no queries found, remove TOC
+  if (blocksArray.length === 0) {
+    const existing = document.getElementById('gemini-minimap-container');
+    if (existing) existing.remove();
+    lastQueryCount = 0;
+    
+    // Cleanup scroll listener
+    if (scrollHandler) {
+      window.removeEventListener('scroll', scrollHandler);
+      scrollHandler = null;
+    }
+    return;
+  }
+
+  let container = document.getElementById('gemini-minimap-container');
+
+  // Only re-render if count changes (optimization for chat)
+  if (blocksArray.length === lastQueryCount && container) {
+    // Just update highlight
+    updateIndicatorHighlight();
+    return;
+  }
+  lastQueryCount = blocksArray.length;
+
+  // Cleanup old container if exists
+  if (container) {
+    container.remove();
+  }
+  
+  // Create new container
+  container = document.createElement('div');
+  container.id = 'gemini-minimap-container';
+  
+  // Build unified rows: text + indicator in one row
+  const rowsHtml = blocksArray.map((block, index) => {
+    // Extract text from query-text-line to avoid label prefixes (e.g., "You said")
+    let rawText = '';
+    const queryLineEl = block.querySelector('.query-text-line');
+    if (queryLineEl && queryLineEl.innerText) {
+      rawText = queryLineEl.innerText;
+    } else {
+      rawText = block.innerText || '';
+    }
+    const text = rawText.trim().replace(/\s+/g, ' ')
+      .replace(/^(You said|你说)\s*/i, '')
+      .trim();
+
+    return `
+      <div class="minimap-row" data-index="${index}">
+        <span class="row-text" title="${escapeHTML(text)}">${escapeHTML(text)}</span>
+        <span class="row-indicator"></span>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="minimap-panel">
+      ${rowsHtml}
+    </div>
+  `;
+
+  document.body.appendChild(container);
+
+  // Add click handlers to rows
+  const addClickHandlers = () => {
+    const allRows = container.querySelectorAll('.minimap-row');
+    allRows.forEach((row) => {
+      const index = parseInt(row.getAttribute('data-index'));
+      if (!isNaN(index)) {
+        row.onclick = (e) => {
+          e.stopPropagation();
+          blocksArray[index].scrollIntoView({ block: 'center' });
+
+          // Force highlight update immediately
+          updateIndicatorHighlight();
+
+          // Temporary background flash on the page element
+          const target = blocksArray[index];
+          const oldBg = target.style.backgroundColor;
+          const oldTransition = target.style.transition;
+          target.style.transition = 'background-color 0.3s';
+          target.style.backgroundColor = 'rgba(55, 54, 91, 0.15)';
+          setTimeout(() => {
+            target.style.backgroundColor = oldBg;
+            setTimeout(() => target.style.transition = oldTransition, 300);
+          }, 1500);
+        };
+      }
+    });
+  };
+
+  addClickHandlers();
+
+  // Container hover handlers
+  container.onmouseenter = () => {
+    container.classList.add('minimap-expanded');
+  };
+
+  container.onmouseleave = () => {
+    container.classList.remove('minimap-expanded');
+  };
+
+  // Setup scroll listener for highlight updates
+  if (scrollHandler) {
+    window.removeEventListener('scroll', scrollHandler);
+  }
+
+  scrollHandler = () => {
+    updateIndicatorHighlight();
+  };
+  window.addEventListener('scroll', scrollHandler, { passive: true });
+
+  // Initial highlight update
+  updateIndicatorHighlight();
+};
+
 // Start
 syncLanguage();
-setInterval(injectLauncher, 2000);
+setInterval(() => {
+  injectLauncher();
+  renderGeminiTOC();
+}, 2000);
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.lang) syncLanguage();
 });

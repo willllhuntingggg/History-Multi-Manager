@@ -381,11 +381,11 @@ const fetchProjects = async (silent = false) => {
     hardClick(moveMenuItem);
     await new Promise(r => setTimeout(r, 500));
 
-    const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
+    const projectLinks = document.querySelectorAll('a[href*="/project"][role="menuitem"]');
     const projects = [];
-    subMenuItems.forEach(el => {
+    projectLinks.forEach(el => {
       const title = el.querySelector('.truncate')?.innerText || el.innerText;
-      if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title.trim());
+      if (title) projects.push(title.trim());
     });
     availableProjects = [...new Set(projects)];
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

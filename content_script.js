@@ -3,7 +3,6 @@
  * Global State
  */
 let isDashboardOpen = false;
-let isTOCSidebarOpen = false; 
 let scannedItems = []; 
 let selectedIds = new Set();
 let processedIds = new Set(); // Track moved/deleted items
@@ -20,30 +19,33 @@ const PLATFORM_CONFIG = {
   chatgpt: {
     name: 'ChatGPT',
     enabled: true,
-    linkSelector: 'a[data-sidebar-item="true"]',
+    // ChatGPT often uses a[data-sidebar-item="true"] for sidebar items, 
+    // but chat links specifically have /c/ in href.
+    linkSelector: 'nav a[href*="/c/"]',
     urlPattern: /^\/c\/[a-z0-9-]{10,}$/i, 
-    menuBtnSelector: 'button[data-testid*="-options"]',
-    deleteBtnSelector: '[data-testid="delete-chat-menu-item"]',
-    confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"]',
+    menuBtnSelector: 'button[data-testid*="-options"], button[id*="radix-"]',
+    deleteBtnSelector: '[data-testid="delete-chat-menu-item"], [role="menuitem"]',
+    confirmBtnSelector: '[data-testid="delete-conversation-confirm-button"], button.btn-danger',
     moveLabelEn: 'Move to',
     moveLabelZh: '移至',
     projectItemSelector: '[role="menuitem"]',
-    loginIndicators: ['[data-testid="user-menu-button"]', '#prompt-textarea', 'nav']
+    loginIndicators: ['[data-testid="user-menu-button"]', '#prompt-textarea', 'nav'],
+    findMenuBtnOutside: true
   },
   gemini: {
     name: 'Gemini',
     enabled: true,
-    // Updated based on user HTML: <a data-test-id="conversation" ...>
-    itemSelector: 'a[data-test-id="conversation"]', 
-    titleSelector: '.conversation-title',
+    // Gemini updated: uses data-test-id="conversation" or just links within the scroller
+    itemSelector: 'a[data-test-id="conversation"], a[href*="/app/"]:not([href*="accounts.google.com"])', 
+    titleSelector: '.conversation-title, .text-content',
     
     // Extract ID from href (primary) or jslog (secondary)
     getId: (el) => {
         const href = el.getAttribute('href');
-        if (href) {
-            // Match /app/ followed by alphanumeric ID
-            const match = href.match(/\/app\/([a-z0-9]+)/i);
-            if (match) return match[1];
+        if (href && !href.includes('accounts.google.com')) {
+            // Match /app/ followed by alphanumeric ID (at least 10 chars)
+            const match = href.match(/\/app\/([a-z0-9]{10,})/i);
+            if (match && match[1] !== 'download') return match[1];
         }
         
         const jslog = el.getAttribute('jslog');
@@ -56,27 +58,32 @@ const PLATFORM_CONFIG = {
 
     // Find the menu button relative to the <a> tag
     getMenuBtn: (el) => {
-        // el is the <a> tag. 
-        // The button is usually in the parent container (wrapper) or a sibling container.
-        const btnSelector = 'button[data-test-id="actions-menu-button"]';
+        const btnSelector = 'button[data-test-id="actions-menu-button"], button[aria-haspopup="menu"]';
         
-        // 1. Try finding in the immediate parent
+        // 1. Try finding in siblings or children
+        let btn = el.querySelector(btnSelector);
+        if (btn) return btn;
+
+        // 2. Try finding in the immediate parent
         if (el.parentElement) {
-            const btn = el.parentElement.querySelector(btnSelector);
+            btn = el.parentElement.querySelector(btnSelector);
             if (btn) return btn;
         }
         
-        // 2. Try traversing up one more level (grandparent) if the <a> is wrapped tightly
-        if (el.parentElement && el.parentElement.parentElement) {
-            const btn = el.parentElement.parentElement.querySelector(btnSelector);
+        // 3. Try traversing up to find a container that has the button
+        let curr = el.parentElement;
+        for (let i = 0; i < 5; i++) {
+            if (!curr) break;
+            btn = curr.querySelector(btnSelector);
             if (btn) return btn;
+            curr = curr.parentElement;
         }
 
         return null;
     },
     menuBtnSelector: 'button[data-test-id="actions-menu-button"]', 
-    deleteBtnSelector: '[role="menuitem"]', 
-    confirmBtnSelector: 'button[data-test-id="confirm-button"]',
+    deleteBtnSelector: '[role="menuitem"], [data-test-id="delete-button"]', 
+    confirmBtnSelector: 'button[data-test-id="confirm-button"], button.mat-mdc-button-base, button.mat-tonal-button',
     moveLabelEn: null, 
     moveLabelZh: null,
     projectItemSelector: null,
@@ -86,14 +93,12 @@ const PLATFORM_CONFIG = {
 
 /**
  * NEW: Platform Abstraction Layer
- * Isolates direct access to PLATFORM_CONFIG and getPlatform()
  */
 const Platform = {
   get type() { return getPlatform(); },
   get config() { return PLATFORM_CONFIG[this.type]; },
   get isGemini() { return this.type === 'gemini'; },
   
-  // Wrappers for operations that need config
   async deleteItem(item) { return await deleteOne(item, this.config); },
   async moveItem(item, project) { return await moveOne(item, project, this.config); }
 };
@@ -101,10 +106,6 @@ const Platform = {
 const uiTranslations = {
   en: {
     launcher_btn: 'Manager',
-    toc_launcher: 'TOC',
-    toc_title: 'Conversation TOC',
-    toc_refresh: 'Refresh TOC',
-    toc_empty: 'No user messages found',
     dash_title: 'Batch Manage Chats',
     dash_subtitle: 'Support Shift-selection (Range/Invert)',
     dash_search_placeholder: 'Search history...',
@@ -130,10 +131,6 @@ const uiTranslations = {
   },
   zh: {
     launcher_btn: '多选管理',
-    toc_launcher: '目录',
-    toc_title: '会话目录',
-    toc_refresh: '更新目录',
-    toc_empty: '未发现用户侧消息',
     dash_title: '多选管理对话',
     dash_subtitle: '支持 Shift 连选（含反选/范围缩减）',
     dash_search_placeholder: '模糊搜索历史记录...',
@@ -180,15 +177,9 @@ const syncLanguage = () => {
 
 const refreshUILabel = () => {
   const launcher = document.getElementById('history-manager-launcher');
-  if (launcher) launcher.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
-
-  const tocLauncher = document.getElementById('chat-toc-launcher');
-  if (tocLauncher) tocLauncher.innerHTML = t('toc_launcher');
-
-  const tocPanel = document.getElementById('chat-toc-panel');
-  if (tocPanel) {
-    tocPanel.querySelector('.toc-header-title').innerText = t('toc_title');
-    tocPanel.querySelector('#refresh-toc-btn').innerText = t('toc_refresh');
+  if (launcher) {
+    launcher.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
+    launcher.title = t('dash_title');
   }
 
   const overlay = document.getElementById('history-manager-overlay');
@@ -210,7 +201,6 @@ const refreshUILabel = () => {
  * Login status detection
  */
 const isLoggedIn = () => {
-  // Use Platform abstraction
   const config = Platform.config;
   if (!config) return false;
   return config.loginIndicators.some(selector => !!document.querySelector(selector));
@@ -221,11 +211,8 @@ const isLoggedIn = () => {
  */
 const cleanupUI = () => {
   document.getElementById('history-manager-launcher')?.remove();
-  document.getElementById('chat-toc-launcher')?.remove();
-  document.getElementById('chat-toc-panel')?.remove();
   document.getElementById('history-manager-overlay')?.remove();
   isDashboardOpen = false;
-  isTOCSidebarOpen = false;
 };
 
 /**
@@ -240,110 +227,6 @@ const escapeHTML = (str) => {
     '"': '&quot;',
     "'": '&#39;'
   })[m]);
-};
-
-/**
- * TOC Panel Initialization
- */
-const initTOC = () => {
-  if (document.getElementById('chat-toc-panel')) return;
-  const panel = document.createElement('div');
-  panel.id = 'chat-toc-panel';
-  panel.innerHTML = `
-    <div class="toc-header">
-      <span class="toc-header-title">${t('toc_title')}</span>
-      <button id="close-toc-btn" aria-label="Close">✕</button>
-    </div>
-    <div id="toc-content-list" class="toc-list"></div>
-    <div class="toc-footer">
-      <button id="refresh-toc-btn">${t('toc_refresh')}</button>
-    </div>
-  `;
-  document.body.appendChild(panel);
-  document.getElementById('close-toc-btn').onclick = toggleTOC;
-  document.getElementById('refresh-toc-btn').onclick = refreshTOC;
-};
-
-const toggleTOC = () => {
-  const panel = document.getElementById('chat-toc-panel');
-  if (!panel) {
-    initTOC();
-    return toggleTOC();
-  }
-  isTOCSidebarOpen = !isTOCSidebarOpen;
-  if (isTOCSidebarOpen) {
-    panel.classList.add('open');
-    refreshTOC();
-  } else {
-    panel.classList.remove('open');
-  }
-};
-
-const refreshTOC = () => {
-  const list = document.getElementById('toc-content-list');
-  if (!list) return;
-  
-  // Try finding user messages (ChatGPT vs Gemini)
-  // ChatGPT: div[data-message-author-role="user"]
-  // Gemini: .user-query-container or similar? Gemini DOM is dynamic.
-  // We'll try a few broad selectors.
-  
-  let userMessages = document.querySelectorAll('div[data-message-author-role="user"]');
-  if (userMessages.length === 0) {
-    // Fallback for Gemini or others: Look for blocks that might be user queries
-    // Gemini often wraps user text in a specific class structure. 
-    // This is experimental for Gemini.
-    userMessages = document.querySelectorAll('.user-query-text, .query-text'); 
-  }
-
-  if (userMessages.length === 0) {
-    list.innerHTML = `<div class="toc-empty">${t('toc_empty')}</div>`;
-    return;
-  }
-
-  list.innerHTML = Array.from(userMessages).map((msg, idx) => {
-    // Try to find the text content container
-    const textEl = msg.querySelector('.whitespace-pre-wrap') || msg;
-    const rawText = textEl.textContent.trim().replace(/\n/g, ' ');
-    const safeText = escapeHTML(rawText);
-
-    return `
-      <div class="toc-item" data-idx="${idx}" title="${safeText}">
-        <div class="toc-item-inner">
-          <span class="toc-num">${idx + 1}</span>
-          <span class="toc-text">${safeText}</span>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  list.querySelectorAll('.toc-item').forEach(item => {
-    item.onclick = () => {
-      const idx = parseInt(item.dataset.idx);
-      const targetMsg = userMessages[idx];
-      if (targetMsg) {
-        targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        
-        const originalBg = targetMsg.style.background;
-        targetMsg.style.transition = 'background 0.5s ease';
-        targetMsg.style.background = 'rgba(55, 54, 91, 0.15)';
-        setTimeout(() => targetMsg.style.background = originalBg, 2000);
-
-        setTimeout(() => {
-          targetMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 600);
-      }
-    };
-  });
-};
-
-const injectTOCLauncher = () => {
-  if (document.getElementById('chat-toc-launcher')) return;
-  const btn = document.createElement('button');
-  btn.id = 'chat-toc-launcher';
-  btn.innerHTML = t('toc_launcher');
-  btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleTOC(); };
-  document.body.appendChild(btn);
 };
 
 /**
@@ -384,19 +267,6 @@ const waitForElement = (selector, timeout = 3000, textMatch = null) => {
   });
 };
 
-const waitForDisappear = (selector, timeout = 4000) => {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const check = () => {
-      const el = document.querySelector(selector);
-      if (!el || el.offsetParent === null) resolve(true);
-      else if (Date.now() - startTime > timeout) resolve(false);
-      else setTimeout(check, 200);
-    };
-    check();
-  });
-};
-
 const getPlatform = () => {
   const host = window.location.hostname;
   if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
@@ -408,15 +278,13 @@ const getPlatform = () => {
  * History Scanner
  */
 const scanHistory = () => {
-  // Use Platform abstraction
   const config = Platform.config;
   if (!config) return [];
   
   const results = [];
   const seenIds = new Set();
 
-  if (config.itemSelector && config.getId) {
-    // Strategy for platforms like Gemini
+  if (config.name === 'Gemini') {
     const items = Array.from(document.querySelectorAll(config.itemSelector));
     items.forEach(el => {
         const id = config.getId(el);
@@ -424,37 +292,38 @@ const scanHistory = () => {
         seenIds.add(id);
         
         let title = "Untitled Chat";
-        if (config.titleSelector) {
-            const titleEl = el.querySelector(config.titleSelector);
-            if (titleEl) title = titleEl.innerText;
-        }
-
-        // Fallback title extraction for Gemini <a> tags
-        if (title === "Untitled Chat" && config.name === 'Gemini') {
-            // Get text, remove known UI labels like date/time if attached (simplistic)
+        const titleEl = el.querySelector(config.titleSelector);
+        if (titleEl) {
+            title = titleEl.innerText.trim();
+        } else {
             const raw = el.innerText;
             if (raw && raw.trim().length > 0) {
                title = raw.split('\n')[0].trim();
             }
         }
-        
         results.push({ id: id, title, url: null, isGemini: true });
     });
   } else {
-    // Strategy for platforms like ChatGPT (Anchor links + HREF)
-    const links = Array.from(document.querySelectorAll(config.linkSelector));
+    // ChatGPT Strategy
+    let links = Array.from(document.querySelectorAll(config.linkSelector));
+    if (links.length === 0) {
+        links = Array.from(document.querySelectorAll('a[data-sidebar-item="true"]')).filter(a => config.urlPattern.test(a.getAttribute('href')));
+    }
+    
     links.forEach((link) => {
         const href = link.getAttribute('href');
         if (!href) return;
         const path = href.split('?')[0];
         if (!config.urlPattern.test(path)) return;
-        if (href.includes('/new') || href === '/') return;
         const rawId = path.split('/').pop();
         if (seenIds.has(rawId)) return;
         seenIds.add(rawId);
         
-        const titleEl = link.querySelector('.truncate, span[dir="auto"]');
-        const title = titleEl ? titleEl.innerText : "Untitled Chat";
+        const titleEl = link.querySelector('.truncate, span[dir="auto"], div.flex-1');
+        let title = titleEl ? titleEl.innerText.trim() : "";
+        if (!title) title = link.innerText.trim().split('\n')[0];
+        if (!title) title = "Untitled Chat";
+        
         results.push({ id: `id-${rawId}`, title, url: href, isGemini: false });
     });
   }
@@ -463,18 +332,12 @@ const scanHistory = () => {
 };
 
 /**
- * Fetch Project List
+ * Fetch Project List (ChatGPT only)
  */
 const fetchProjects = async (silent = false) => {
   if (isFetchingProjects) return;
-
-  // Use Platform abstraction
   const config = Platform.config;
-  
-  if (!config.projectItemSelector) {
-    if (!silent) alert(t('not_supported_gemini'));
-    return;
-  }
+  if (!config.projectItemSelector) return;
 
   let item = null;
   if (selectedIds.size > 0) {
@@ -484,29 +347,30 @@ const fetchProjects = async (silent = false) => {
     item = scannedItems[0];
   }
 
-  if (!item) {
-    if (!silent) alert(t('alert_select_first'));
-    return;
-  }
+  if (!item) return;
 
   isFetchingProjects = true;
-  renderProjectDropdown(); // Show loading state
+  renderProjectDropdown();
 
   try {
-    const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+    const link = document.querySelector(`a[href="${item.url}"]`);
     if (!link) throw new Error("Chat link not found");
     
     let menuBtn = link.querySelector(config.menuBtnSelector);
-    if (!menuBtn && config.findMenuBtnOutside) {
-        menuBtn = link.parentElement.querySelector(config.menuBtnSelector);
-        if (!menuBtn) menuBtn = link.parentElement?.parentElement?.querySelector(config.menuBtnSelector);
+    if (!menuBtn) {
+        let curr = link.parentElement;
+        for (let i = 0; i < 3; i++) {
+            if (!curr) break;
+            menuBtn = curr.querySelector(config.menuBtnSelector);
+            if (menuBtn) break;
+            curr = curr.parentElement;
+        }
     }
     if (!menuBtn) throw new Error("Menu button not found");
 
     link.scrollIntoView({ block: 'center' });
     hardClick(menuBtn);
     
-    // Improved: Check for both languages at once with increased timeout
     const moveLabels = [config.moveLabelEn, config.moveLabelZh].filter(Boolean);
     const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, moveLabels);
 
@@ -520,21 +384,15 @@ const fetchProjects = async (silent = false) => {
     const subMenuItems = document.querySelectorAll('[role="menu"] a[role="menuitem"], [role="menu"] [role="menuitem"]');
     const projects = [];
     subMenuItems.forEach(el => {
-      const title = el.querySelector('.truncate')?.innerText;
-      if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title);
+      const title = el.querySelector('.truncate')?.innerText || el.innerText;
+      if (title && !title.includes('Project') && title !== 'New project' && title !== '新项目') projects.push(title.trim());
     });
     availableProjects = [...new Set(projects)];
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    // Double escape to ensure submenus are closed
     await new Promise(r => setTimeout(r, 100));
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   } catch (e) {
-    if (!silent) {
-       console.warn("Fetch projects failed:", e);
-       alert(t('alert_select_first') + ` (Details: ${e.message})`);
-    } else {
-       console.log("Silent fetch projects failed:", e.message);
-    }
+    console.warn("Fetch projects failed:", e);
   } finally {
     isFetchingProjects = false;
     renderProjectDropdown();
@@ -548,35 +406,32 @@ const deleteOne = async (item, config) => {
   let element;
   let menuBtn;
 
-  if (item.isGemini && config.getMenuBtn) {
-      // Logic for Gemini
-      // Re-find the element using ID pattern in jslog or attribute
+  if (item.isGemini) {
       const items = Array.from(document.querySelectorAll(config.itemSelector));
-      element = items.find(el => {
-         const id = config.getId(el);
-         return id === item.id;
-      });
-      
+      element = items.find(el => config.getId(el) === item.id);
       if (!element) return false;
       element.scrollIntoView({ block: 'center' });
-      element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-      await new Promise(r => setTimeout(r, 400));
       
-      menuBtn = config.getMenuBtn(element);
+      // Hover over the element and its parent to trigger the menu button rendering
+      element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, view: window }));
+      if (element.parentElement) {
+          element.parentElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, view: window }));
+      }
+      await new Promise(r => setTimeout(r, 200));
 
+      menuBtn = config.getMenuBtn(element);
   } else {
-      // Logic for ChatGPT
-      element = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+      element = document.querySelector(`a[href="${item.url}"]`);
       if (!element) return false;
       
       menuBtn = element.querySelector(config.menuBtnSelector);
-      if (!menuBtn && config.findMenuBtnOutside) {
-          const parent = element.parentElement;
-          if (parent) {
-              menuBtn = parent.querySelector(config.menuBtnSelector);
-              if (!menuBtn && parent.parentElement) {
-                   menuBtn = parent.parentElement.querySelector(config.menuBtnSelector);
-              }
+      if (!menuBtn) {
+          let curr = element.parentElement;
+          for (let i = 0; i < 3; i++) {
+              if (!curr) break;
+              menuBtn = curr.querySelector(config.menuBtnSelector);
+              if (menuBtn) break;
+              curr = curr.parentElement;
           }
       }
       element.scrollIntoView({ block: 'center' });
@@ -586,26 +441,19 @@ const deleteOne = async (item, config) => {
   if (!menuBtn) return false;
 
   hardClick(menuBtn);
-  
-  // Wait for delete menu item.
   let deleteBtn = await waitForElement(config.deleteBtnSelector, 2000, t('delete_text'));
-  
   if (!deleteBtn) {
       document.body.click();
       return false;
   }
   
   hardClick(deleteBtn);
-  
-  // Increased wait time for confirm button animation
   const confirmBtn = await waitForElement(config.confirmBtnSelector, 5000, t('delete_text'));
-  
   if (!confirmBtn) {
        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
        return false;
   }
   
-  // Add small delay to ensure dialog is ready for interaction
   await new Promise(r => setTimeout(r, 300));
   hardClick(confirmBtn);
   await new Promise(r => setTimeout(r, 1000));
@@ -614,21 +462,27 @@ const deleteOne = async (item, config) => {
 
 const moveOne = async (item, projectName, config) => {
   if (!config.projectItemSelector) return false;
-
-  const link = document.querySelector(`${config.linkSelector}[href="${item.url}"]`);
+  const link = document.querySelector(`a[href="${item.url}"]`);
   if (!link) return false;
   
-  const menuBtn = link.querySelector(config.menuBtnSelector);
+  let menuBtn = link.querySelector(config.menuBtnSelector);
+  if (!menuBtn) {
+      let curr = link.parentElement;
+      for (let i = 0; i < 3; i++) {
+          if (!curr) break;
+          menuBtn = curr.querySelector(config.menuBtnSelector);
+          if (menuBtn) break;
+          curr = curr.parentElement;
+      }
+  }
   if (!menuBtn) return false;
   
   link.scrollIntoView({ block: 'center' });
   await new Promise(r => setTimeout(r, 400));
   hardClick(menuBtn);
   
-  // Improved: Check for both languages at once
   const moveLabels = [config.moveLabelEn, config.moveLabelZh].filter(Boolean);
   const moveMenuItem = await waitForElement(config.projectItemSelector, 3000, moveLabels);
-
   if (!moveMenuItem) return false;
   hardClick(moveMenuItem);
   
@@ -654,7 +508,6 @@ const runBatchDelete = async () => {
   for (let i = 0; i < ids.length; i++) {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
-    // Use Platform.deleteItem instead of direct config/deleteOne calls
     if (item && await Platform.deleteItem(item)) {
       processedIds.add(ids[i]); 
       selectedIds.delete(ids[i]);
@@ -664,7 +517,7 @@ const runBatchDelete = async () => {
   }
   isProcessing = false;
   overlay.classList.remove('processing');
-  alert(t('alert_delete_done'));
+  toggleDashboard();
 };
 
 const runBatchMove = async (projectName) => {
@@ -677,7 +530,6 @@ const runBatchMove = async (projectName) => {
   for (let i = 0; i < ids.length; i++) {
     updateProgress(i + 1, ids.length);
     const item = scannedItems.find(it => it.id === ids[i]);
-    // Use Platform.moveItem instead of direct config/moveOne calls
     if (item && await Platform.moveItem(item, projectName)) {
       processedIds.add(ids[i]); 
       selectedIds.delete(ids[i]);
@@ -687,12 +539,9 @@ const runBatchMove = async (projectName) => {
   }
   isProcessing = false;
   overlay.classList.remove('processing');
-  alert(t('alert_move_done'));
+  toggleDashboard();
 };
 
-/**
- * Dashboard Rendering
- */
 const renderDashboard = () => {
   const container = document.getElementById('dashboard-items-grid');
   if (!container) return;
@@ -749,7 +598,6 @@ const updateFooter = () => {
   const lbl = document.getElementById('selected-count-label');
   const delBtn = document.getElementById('dash-delete-btn');
   const moveBtn = document.getElementById('dash-move-trigger');
-  // Use Platform abstraction
   const config = Platform.config;
 
   if (lbl) lbl.innerText = `${selectedIds.size} ${t('dash_selected_count')}`;
@@ -758,7 +606,7 @@ const updateFooter = () => {
   if (moveBtn) {
     moveBtn.disabled = selectedIds.size === 0 || isProcessing;
     if (config && !config.projectItemSelector) {
-        moveBtn.style.display = 'none'; // Hide move button if not supported
+        moveBtn.style.display = 'none';
     } else {
         moveBtn.style.display = 'block';
     }
@@ -772,13 +620,10 @@ const toggleDashboard = () => {
   isDashboardOpen = !isDashboardOpen;
   if (isDashboardOpen) {
     overlay.style.setProperty('display', 'flex', 'important');
-    // Filter out already processed (moved/deleted) items when re-scanning
     scannedItems = scanHistory().filter(item => !processedIds.has(item.id));
     selectedIds.clear(); renderDashboard(); updateFooter();
-
-    // Optimistic fetch if we have no projects yet
     if (availableProjects.length === 0 && Platform.config.projectItemSelector && !isFetchingProjects) {
-        fetchProjects(true); // Silent background fetch
+        fetchProjects(true);
     }
   } else {
     overlay.style.display = 'none';
@@ -832,7 +677,6 @@ const initOverlay = () => {
     if (!availableProjects.length && !isFetchingProjects) fetchProjects(); 
   };
   
-  // Close dropdown on outside click, but ignore simulated clicks from this script (isTrusted=false)
   window.addEventListener('click', (e) => {
     if (!e.isTrusted) return; 
     dropdown.classList.remove('open');
@@ -845,7 +689,6 @@ const initOverlay = () => {
  * Injection
  */
 const injectLauncher = () => {
-  // Use Platform abstraction
   if (!Platform.type) return;
   if (!isLoggedIn()) { cleanupUI(); return; }
   if (document.getElementById('history-manager-launcher')) return;
@@ -853,55 +696,32 @@ const injectLauncher = () => {
   const btn = document.createElement('button');
   btn.id = 'history-manager-launcher';
   btn.innerHTML = `<span>☑</span> ${t('launcher_btn')}`;
+  btn.title = t('dash_title');
   btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); toggleDashboard(); };
   
   if (Platform.isGemini) {
-      // Find the "Settings & help" button
       const targetBtn = document.querySelector('side-nav-action-button[data-test-id="settings-and-help-button"]');
       if (targetBtn && targetBtn.parentElement) {
           const parentList = targetBtn.parentElement;
-          
-          // Change layout to horizontal
           parentList.style.display = 'flex';
           parentList.style.flexDirection = 'row';
           parentList.style.alignItems = 'center';
-          
-          // Let Settings button be flexible but not hog all space
           targetBtn.style.flex = '1'; 
           targetBtn.style.width = 'auto'; 
-          
+          btn.style.flex = '1';
+          btn.style.marginLeft = '8px';
           parentList.appendChild(btn);
-          btn.classList.add('gemini-launcher-inline');
       } else {
-          // If not found yet, return and wait for next mutation
-          return;
+          document.body.appendChild(btn);
       }
   } else {
-      // Standard ChatGPT injection
-      const sidebar = document.querySelector('nav') || document.querySelector('[role="navigation"]');
-      if (sidebar) sidebar.appendChild(btn);
+      document.body.appendChild(btn);
   }
-  
-  injectTOCLauncher();
-  initTOC();
 };
 
-const observer = new MutationObserver(() => injectLauncher());
-observer.observe(document.body, { childList: true, subtree: true });
-
-// Listen for storage changes to sync language immediately
-if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.lang) {
-      syncLanguage();
-    }
-  });
-}
-
-// Initial Sync
+// Start
 syncLanguage();
-setTimeout(injectLauncher, 2000);
-
-const style = document.createElement('style');
-style.textContent = `.processing #processing-mask { display: flex !important; }`;
-document.head.appendChild(style);
+setInterval(injectLauncher, 2000);
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.lang) syncLanguage();
+});

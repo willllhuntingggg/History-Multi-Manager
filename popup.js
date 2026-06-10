@@ -7,7 +7,6 @@ const translations = {
     step1: '点击侧边栏悬浮的 <strong class="text-highlight">"☑ 多选管理"</strong>。',
     step2: '配合 <span class="kbd">Shift</span> 键可进行批量连选。',
     step3: '支持批量删除、关键词搜索 (Gemini 暂不支持移动项目)。',
-    step4: '点击右侧悬浮 <strong class="text-highlight">"目录"</strong> 按钮，查看会话大纲。',
     howTo: '操作指南',
     openBtn: '打开 ChatGPT',
     openGeminiBtn: '打开 Gemini',
@@ -21,7 +20,6 @@ const translations = {
     step1: 'Click <strong class="text-highlight">"☑ Manager"</strong> on the sidebar.',
     step2: 'Use <span class="kbd">Shift</span> + Click for bulk selection.',
     step3: 'Batch Delete and Search (Move not supported on Gemini).',
-    step4: 'Click floating <strong class="text-highlight">"TOC"</strong> button to view outline.',
     howTo: 'How to use',
     openBtn: 'Open ChatGPT',
     openGeminiBtn: 'Open Gemini',
@@ -126,7 +124,7 @@ function render() {
   document.getElementById('lang-btn').textContent = t.langBtn;
   document.getElementById('howto-title').textContent = t.howTo;
   
-  const stepsHTML = [t.step1, t.step2, t.step3, t.step4].map((step, idx) => `
+  const stepsHTML = [t.step1, t.step2, t.step3].map((step, idx) => `
     <div class="step-item">
       <div class="step-num">${idx + 1}</div>
       <p class="step-text">${step}</p>
